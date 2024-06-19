@@ -1,5 +1,5 @@
 import pyarrow
-import pyarrow.compute
+import pyarrow.dataset
 import pickle
 
 base_path = "/stage/irsa-data-parquetlinks/links-tmp/neowiser/healpix_k5/"

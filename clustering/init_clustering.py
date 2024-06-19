@@ -2,7 +2,7 @@ import pyarrow
 import pyarrow.dataset
 import pickle
 
-base_path = "/stage/irsa-data-parquetlinks/links-tmp/neowiser/healpix_k5/"
+base_path = "/stage/irsa-data-parquet10/wise/neowiser/p1bs_psd/healpix_k5/" 
 year_path = "year<N>_skinny/neowiser-healpix_k5-year<N>_skinny.parquet/_metadata"
 neowise_path = lambda year: base_path + year_path.replace("<N>", str(year))
 year_datasets = [

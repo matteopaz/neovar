@@ -15,5 +15,5 @@ cluster_map_tbl = find_clusters_one_partition(partition_k_pixel_id, neowise_ds)
 
 # Save the cluster map table to a file.
 
-PATH_TO_OUTPUT_DIRECTORY = "/home/mpaz/neowise-clustering/out"
+PATH_TO_OUTPUT_DIRECTORY = "/home/mpaz/neowise-clustering/clustering/out"
 cluster_map_tbl.to_csv(f"{PATH_TO_OUTPUT_DIRECTORY}/partition_{partition_k_pixel_id}_cluster_map.csv", index=False)

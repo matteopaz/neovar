@@ -1,15 +1,20 @@
 #!/bin/bash -l
 
 #SBATCH --job-name=neowise-clustering-mpaz
-#SBATCH --ntasks=4
+#SBATCH --ntasks=1
 #SBATCH --exclusive
-#SBATCH --time="00:01:00"
+#SBATCH --time="01:00:00"
 
-python3 init_clustering.py
+read -p "Reload and dump schema? [y/n]" yn
 
-for partition_id in {0..3}
+if [ $yn="y" ]; then
+srun --ntasks=1 python3 init_clustering.py &
+wait
+fi
+
+for partition_id in {0..0}
 do
-    srun --ntasks=1 sleep 1 & python3 print_test.py --partition_id $partition_id &
+    srun --ntasks=1 python3 instance.py --partition_id=$partition_id &
 done
 
 wait

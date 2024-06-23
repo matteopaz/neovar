@@ -12,21 +12,14 @@ def count_rows_done():
     with open("./logs/progress.txt") as f:
         lines = f.readlines()
         for line in lines:
-            apparitions = int(line.strip().split("_")[2])
+            if len(line.strip().split("_")) < 4:
+                continue
+            try:
+                apparitions = int(line.strip().split("_")[2])
+            except:
+                continue
             n += apparitions
     return n
-
-def current_partitions_in_progress():
-    inprog = []
-    with open("./logs/progress.txt") as f:
-        lines = f.readlines()
-        for line in lines:
-            parts = line.strip().split("_")
-            pid = int(parts[0])
-            status = int(parts[1])
-            if status == 1:
-                inprog.append(pid)
-    return inprog
 
 while True:
     rows_done = count_rows_done()
@@ -41,11 +34,8 @@ while True:
     est_end_datetime = datetime.fromtimestamp(now_t + time_left)
     pct_done = rows_done / TOTAL_ROWS * 100
 
-    inprog = current_partitions_in_progress()
-
     # clear the output
     print("\033[H\033[J")
     print(f"{pct_done:.2f}% done. {rows_done} rows done. Estimated time left: {time_left_hrs:.2f} hours. Estimated end time: {est_end_datetime}.")
-    print(f"Partitions in progress: {inprog}")
     sleep(UPDATE_DELAY_S)
 

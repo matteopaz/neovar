@@ -63,22 +63,24 @@ for partition_k_pixel_id in range(start_idx, end_idx):
     nrows = sizeof(partition_k_pixel_id)
     subdivisions = ceil(0.5 * log2(nrows / MAX_ROWS_TO_LOAD)) # Log 4 of the number of rows
     iter_k = 5 + subdivisions
+
     log("Partition {} has {} rows. Using {} subdivisions - iter_k={}.".format(partition_k_pixel_id, nrows, subdivisions, iter_k))
 
     t1 = perf_counter()
     try:
-        source_ids_to_cluster_id, cluster_id_to_data = find_clusters_one_partition(partition_k_pixel_id, neowise_ds, iter_k=iter_k)
+        cntrs_to_cluster_id, cluster_id_to_data = find_clusters_one_partition(partition_k_pixel_id, neowise_ds, iter_k=iter_k)
     except Exception as e:
         log(f"Error on partition {partition_k_pixel_id}: {e}")
         print(f"Error on partition {partition_k_pixel_id}: {e}", file=open("/home/mpaz/neowise-clustering/clustering/logs/errors.txt", "a"))
         print(f"Error on partition {partition_k_pixel_id}: {e}", file=open("/home/mpaz/neowise-clustering/clustering/logs/masterlog.txt", "a"))
+        open("/home/mpaz/neowise-clustering/clustering/logs/progress.txt", "a").write(f"{partition_k_pixel_id}_0_{nrows}_{0}_{str(datetime.now())}\n")
         continue
     t_clustering = perf_counter() - t1
 
     # Rename the cluster ID so instead of encoding (partition_id, position) it encodes (partition_id, order)
     # This is done so the cluster ID can be iterated upon
 
-    n_apparitions_after_clustering = len(source_ids_to_cluster_id)
+    n_apparitions_after_clustering = len(cntrs_to_cluster_id)
     n_clusters = cluster_id_to_data.num_rows
     log("Clustering on partition {} complete in {}s. {} clusters. {} apparitions included. It is {}".format(
         partition_k_pixel_id, t_clustering, n_clusters, n_apparitions_after_clustering, datetime.now()
@@ -86,9 +88,9 @@ for partition_k_pixel_id in range(start_idx, end_idx):
     print(f"Partition {partition_k_pixel_id} complete in {t_clustering}s. {n_clusters} clusters. {n_apparitions_after_clustering} apparitions.",
     file=open("/home/mpaz/neowise-clustering/clustering/logs/masterlog.txt", "a"))
 
-    open("/home/mpaz/neowise-clustering/clustering/logs/progress.txt", "a").write(f"{partition_k_pixel_id}_2_{nrows}_{n_apparitions_after_clustering}_{str(datetime.now())}\n")
+    open("/home/mpaz/neowise-clustering/clustering/logs/progress.txt", "a").write(f"{partition_k_pixel_id}_1_{nrows}_{n_apparitions_after_clustering}_{str(datetime.now())}\n")
     # Save the cluster map table to a file.
 
     PATH_TO_OUTPUT_DIRECTORY = "/home/mpaz/neowise-clustering/clustering/out"
-    source_ids_to_cluster_id.to_csv(f"{PATH_TO_OUTPUT_DIRECTORY}/partition_{partition_k_pixel_id}_source_id_to_cluster_id.csv", index=False)
+    cntrs_to_cluster_id.to_csv(f"{PATH_TO_OUTPUT_DIRECTORY}/partition_{partition_k_pixel_id}_cntr_to_cluster_id.csv", index=False)
     pq.write_table(cluster_id_to_data, f"{PATH_TO_OUTPUT_DIRECTORY}/partition_{partition_k_pixel_id}_cluster_id_to_data.parquet")

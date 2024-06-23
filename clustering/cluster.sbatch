@@ -2,8 +2,6 @@
 
 #SBATCH --job-name=neowise-clustering-mpaz
 #SBATCH --exclusive
-#SBATCH --array=0-123%8
+#SBATCH --array=0-123%9
 
-python init.py
-
-srun python dummyinstance.py
+srun python instance.py

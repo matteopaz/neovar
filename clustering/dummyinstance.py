@@ -42,11 +42,11 @@ log("Slurm job {} with task ID {} assigned on partitions {} to {}".format(SLURM_
 
 for partition_k_pixel_id in range(start_idx, end_idx):
     log("Beginning clustering on partition {} at {}".format(partition_k_pixel_id, datetime.now()))
-    open("/home/mpaz/neowise-clustering/clustering/logs/progress.txt", "a").write(f"{partition_k_pixel_id}_1_{str(datetime.now())}\n")
 
     nrows = sizeof(partition_k_pixel_id)
     subdivisions = ceil(0.5 * log2(nrows / MAX_ROWS_TO_LOAD)) # Log 4 of the number of rows
     iter_k = 5 + subdivisions
+
     log("Partition {} has {} rows. Using {} subdivisions - iter_k={}.".format(partition_k_pixel_id, nrows, subdivisions, iter_k))
 
     t1 = perf_counter()
@@ -55,7 +55,7 @@ for partition_k_pixel_id in range(start_idx, end_idx):
         if randint(0, 25) == 0:
             raise Exception("Random exception")
     except Exception as e:
-        open("/home/mpaz/neowise-clustering/clustering/logs/progress.txt", "a").write(f"{partition_k_pixel_id}_0_{str(datetime.now())}\n")
+        open("/home/mpaz/neowise-clustering/clustering/logs/progress.txt", "a").write(f"{partition_k_pixel_id}_0_{nrows}_{0}_{str(datetime.now())}\n")
         log(f"Error on partition {partition_k_pixel_id}: {e}")
         print(f"Error on partition {partition_k_pixel_id}: {e}", file=open("/home/mpaz/neowise-clustering/clustering/logs/errors.txt", "a"))
 
@@ -75,7 +75,7 @@ for partition_k_pixel_id in range(start_idx, end_idx):
     print(f"Partition {partition_k_pixel_id} complete in {t_clustering}s. {n_clusters} clusters. {n_apparitions_after_clustering} apparitions included.",
     file=open("/home/mpaz/neowise-clustering/clustering/logs/masterlog.txt", "a"))
 
-    open("/home/mpaz/neowise-clustering/clustering/logs/progress.txt", "a").write(f"{partition_k_pixel_id}_2_{str(datetime.now())}\n")
+    open("/home/mpaz/neowise-clustering/clustering/logs/progress.txt", "a").write(f"{partition_k_pixel_id}_1_{nrows}_{n_apparitions_after_clustering}_{str(datetime.now())}\n")
     # Save the cluster map table to a file.
 
     PATH_TO_OUTPUT_DIRECTORY = "/home/mpaz/neowise-clustering/clustering/out"

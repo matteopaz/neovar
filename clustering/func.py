@@ -8,6 +8,7 @@ import pyarrow.dataset
 import pyarrow.parquet as pq
 from sklearn.cluster import DBSCAN
 import pandas as pd
+import psutil
 from line_profiler import profile
 # import plotly.graph_objects as go
 
@@ -39,6 +40,9 @@ MARGIN_K = 12
 #     partition_k_pixel_id = 10936
 #     find_clusters_one_partition(partition_k_pixel_id, neowise_ds)
 
+def get_memory_usage_pct():
+    return psutil.virtual_memory().percent
+
 def find_clusters_one_partition(partition_k_pixel_id: int, neowise_ds: pyarrow.dataset.Dataset, iter_k=ITER_K):
     global ITER_K
     ITER_K = iter_k
@@ -49,8 +53,10 @@ def find_clusters_one_partition(partition_k_pixel_id: int, neowise_ds: pyarrow.d
         iter_k_pixel_ids = [iter_k_pixel_ids]
     
     # Iterate over pixels, load the data, and cluster.
+
+    tbl_list_entry_ids = []
     iter_k_cntr_to_cluster_map_tbls = []
-    iter_k_cluster_to_cntr_map_tbls = []
+    iter_k_cluster_to_data_map_tbls = []
 
     for iter_k_pixel_id in iter_k_pixel_ids:
         filters = construct_filters(partition_k_pixel_id, iter_k_pixel_id)
@@ -61,14 +67,47 @@ def find_clusters_one_partition(partition_k_pixel_id: int, neowise_ds: pyarrow.d
         ]
         pixel_tbl = neowise_ds.to_table(columns=columns, filter=filters)
         
-        print("{} apparitions in pixel {}".format(len(pixel_tbl), iter_k_pixel_id))
+        # print("{} apparitions in pixel {}".format(len(pixel_tbl), iter_k_pixel_id))
 
-        iter_k_cntr_to_cluster_map_tbl, iter_k_cluster_to_cntr_map_tbl = cluster(pixel_tbl, iter_k_pixel_id)
+        iter_k_cntr_to_cluster_map_tbl, iter_k_cluster_to_data_map_tbl = cluster(pixel_tbl, iter_k_pixel_id)
+
+
+        tbl_list_entry_ids.append(iter_k_pixel_id)
         iter_k_cntr_to_cluster_map_tbls.append(iter_k_cntr_to_cluster_map_tbl)
-        iter_k_cluster_to_cntr_map_tbls.append(iter_k_cluster_to_cntr_map_tbl)
+        iter_k_cluster_to_data_map_tbls.append(iter_k_cluster_to_data_map_tbl)
+
+        # If memory is too high (>70%), merge tables and save to disk, then clear memory
+        open("temp.log", "a").write(f"Memory usage: {get_memory_usage_pct()}\n")
+
+        if get_memory_usage_pct() > 90:
+            # Emergency, raise error. Hopefully should not reach this given the memory checks
+            raise MemoryError("Memory usage is too high. Exiting to prevent crash.")
+
+        if get_memory_usage_pct() > 70:
+            open("temp.log", "a").write("Memory usage is high. Saving to disk and clearing memory.")
+            start_iterk_PIDS = tbl_list_entry_ids[0]
+            end_iterk_PIDS = tbl_list_entry_ids[-1]
+            partition_k_cntr_to_cluster_map_tbl = pd.concat(iter_k_cntr_to_cluster_map_tbls, axis=0)
+            partition_k_cluster_to_data_map_tbl = pyarrow.concat_tables(iter_k_cluster_to_data_map_tbls)
+            # Save to disk
+            PATH_TO_OUTPUT_DIRECTORY = "/home/mpaz/neowise-clustering/clustering/out"
+            partition_k_cntr_to_cluster_map_tbl.to_csv(
+                PATH_TO_OUTPUT_DIRECTORY +
+                f"/healpix_k{ITER_K}_partitions_{start_iterk_PIDS}-{end_iterk_PIDS}_cntr_to_cluster_map_tbl.csv"
+                )
+            pq.write_table(partition_k_cluster_to_data_map_tbl, 
+                PATH_TO_OUTPUT_DIRECTORY + f"/healpix_k{ITER_K}_partitions_{start_iterk_PIDS}-{end_iterk_PIDS}_cntr_to_cluster_map_tbl.csv")
+            # Clear memory
+            del partition_k_cntr_to_cluster_map_tbl
+            del partition_k_cluster_to_cntr_map_tbl
+
+            iter_k_cntr_to_cluster_map_tbls = []
+            iter_k_cluster_to_data_map_tbls = []
+            tbl_list_entry_ids = []
+        
     
     partition_k_cntr_to_cluster_map_tbl = pd.concat(iter_k_cntr_to_cluster_map_tbls, axis=0)
-    partition_k_cluster_to_cntr_map_tbl = pyarrow.concat_tables(iter_k_cluster_to_cntr_map_tbls)
+    partition_k_cluster_to_cntr_map_tbl = pyarrow.concat_tables(iter_k_cluster_to_data_map_tbls)
 
     
     return partition_k_cntr_to_cluster_map_tbl, partition_k_cluster_to_cntr_map_tbl 
@@ -264,6 +303,7 @@ def cluster(pixel_tbl: pyarrow.Table, iter_k_pixel_id: int) -> pyarrow.Table:
             del all_clusters[label] # Remove the cluster from the dictionary if it does not belong to the current pixel
 
     cntr_to_cluster_id = pd.DataFrame({"cntr": cntrs, "cluster_id": cluster_ids_np})
+
     clean_cntr_to_cluster_id = cntr_to_cluster_id.dropna() # Remove rows with no cluster_id
     cluster_id_to_data = dict_to_data_tbl(all_clusters, pixel_tbl) # Convert to dictionary
 
@@ -304,6 +344,3 @@ def dict_to_data_tbl(d: dict, data_tbl: pyarrow.Table):
     # construct pyarrow table from this
     table = pyarrow.table(data, schema)
     return table
-
-
-

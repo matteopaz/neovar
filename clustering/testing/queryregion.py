@@ -11,18 +11,18 @@ Irsa.ROW_LIMIT = 1000000
 
 coord = lambda ra, dec: SkyCoord(ra, dec, unit=(u.deg, u.deg), frame="icrs")
 
-side_length = 100 * u.arcsec
-ctrs = [coord(246.3695, -23.4853), coord(266.4071, -28.9342), coord(50.00, 50.00), coord(0.1, 89.9)]
+side_length = 150 * u.arcsec
+ctrs = [coord(246.3695, -23.4853), coord(266.4071, -28.9342), coord(50.00, 50.00), coord(90, -66.56)]
 # idx 0 is nebulous region in the Rho Ophiuchi Cloud complex, featuring dense spurious nebulous detections and artifacts from nearby bright stars
 # idx 1 is the galactic center
 # idx 2 is a region in the Perseus constellation (Ra and Dec 50.00) representative of the majority of the sky. More isolated sources and reliable detections
-# idx 3 is centered roughly about the north ecliptic pole, a region with very high sampling frequency
+# idx 3 is centered roughly about the south ecliptic pole, a region with very high sampling frequency
 
 
 for i, ctr in enumerate(ctrs):
     print(f"Querying region {i}...")
     tbl = Irsa.query_region(ctr, catalog='neowiser_p1bs_psd', spatial="Box",
-                                width=side_length, columns="ra,dec,w1mpro,w1sigmpro,cc_flags,w1rchi2,saa_sep,w1snr,qual_frame,moon_masked,sso_flg")
+                                width=side_length, columns="ra,dec,w1mpro,w1sigmpro,w1cc_map,w1rchi2,saa_sep,w1snr,qual_frame,moon_masked,sso_flg")
     tbl = tbl.to_pandas()
 
     tbl.to_csv(f"region{i}.csv")

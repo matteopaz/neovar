@@ -1,15 +1,40 @@
 from datetime import datetime
 from time import sleep
+import os
+import pandas as pd
 
 UPDATE_DELAY_S = 1
 
 start_t = float(open("./logs/start_time.txt").read())
 
-TOTAL_ROWS = 188876840852
+def unfinished_partitions():
+    directory = os.fsencode("/home/mpaz/neowise-clustering/clustering/out/")
+
+    partition_ids = set(list(range(12288)))
+        
+    for file in os.listdir(directory):
+        filename = os.fsdecode(file)
+        if filename.endswith(".csv"):
+            parts = filename.split("_")
+            pid = int(parts[1])
+            partition_ids.remove(pid)
+    return partition_ids
+
+def sizeof(partition_id):
+    path = lambda yr: "/stage/irsa-data-parquet10/wise/neowiser/p1bs_psd/healpix_k5/" + f"year{yr}_skinny/row-counts-per-partition.csv"
+    nrows = 0
+    for yr in range(1,11):
+        # Access the row counts for the year
+        df = pd.read_csv(path(yr))
+        # Get the row count for the partition
+        nrows += df[df["healpix_k5"] == partition_id]["nrows"].values[0]
+    return nrows
+
+TOTAL_ROWS = sum([sizeof(pid) for pid in unfinished_partitions()])
 
 def count_rows_done():
     n = 0
-    with open("./logs/progress.txt") as f:
+    with open("./logs/progress.txt", "r") as f:
         lines = f.readlines()
         for line in lines:
             if len(line.strip().split("_")) < 4:

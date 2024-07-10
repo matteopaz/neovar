@@ -10,6 +10,8 @@ from sklearn.cluster import DBSCAN
 import pandas as pd
 import psutil
 from line_profiler import profile
+from time import perf_counter
+import threading
 # import plotly.graph_objects as go
 
 
@@ -25,7 +27,7 @@ ITER_K = 5
 # Choose MARGIN_K such that the pixels are as small as possible while still including everything
 # that needs to be considered when clustering an ITER_K pixel.
 # To see how big a pixel is, you may want to use an hpgeom method like max_pixel_radius or nside_to_pixel_area.
-MARGIN_K = 12
+MARGIN_K = 13
 
 
 # def run():
@@ -65,26 +67,29 @@ def find_clusters_one_partition(partition_k_pixel_id: int, neowise_ds: pyarrow.d
             "mjd", "w1flux", "w1sigflux", "w2flux", "w2sigflux",
             "qual_frame", "w1rchi2", "w2rchi2"
         ]
+        print("starting to get table")
+        t1 = perf_counter()
         pixel_tbl = neowise_ds.to_table(columns=columns, filter=filters)
+        pixel_tbl = pixel_tbl.replace_schema_metadata()
+        print("got table of {} rows in {}s, {} mem consumpt".format(len(pixel_tbl), perf_counter() - t1, get_memory_usage_pct()))
         
         # print("{} apparitions in pixel {}".format(len(pixel_tbl), iter_k_pixel_id))
 
+        print("Beginning clustering step")
+        t1 = perf_counter()
         iter_k_cntr_to_cluster_map_tbl, iter_k_cluster_to_data_map_tbl = cluster(pixel_tbl, iter_k_pixel_id)
-
+        print("Finished clustering step in {}s".format(perf_counter() - t1))
 
         tbl_list_entry_ids.append(iter_k_pixel_id)
         iter_k_cntr_to_cluster_map_tbls.append(iter_k_cntr_to_cluster_map_tbl)
         iter_k_cluster_to_data_map_tbls.append(iter_k_cluster_to_data_map_tbl)
-
-        # If memory is too high (>70%), merge tables and save to disk, then clear memory
-        open("temp.log", "a").write(f"Memory usage: {get_memory_usage_pct()}\n")
 
         if get_memory_usage_pct() > 90:
             # Emergency, raise error. Hopefully should not reach this given the memory checks
             raise MemoryError("Memory usage is too high. Exiting to prevent crash.")
 
         if get_memory_usage_pct() > 70:
-            open("temp.log", "a").write("Memory usage is high. Saving to disk and clearing memory.")
+            print("Memory usage is high. Writing to disk and clearing memory")
             start_iterk_PIDS = tbl_list_entry_ids[0]
             end_iterk_PIDS = tbl_list_entry_ids[-1]
             partition_k_cntr_to_cluster_map_tbl = pd.concat(iter_k_cntr_to_cluster_map_tbls, axis=0)
@@ -93,10 +98,10 @@ def find_clusters_one_partition(partition_k_pixel_id: int, neowise_ds: pyarrow.d
             PATH_TO_OUTPUT_DIRECTORY = "/home/mpaz/neowise-clustering/clustering/out"
             partition_k_cntr_to_cluster_map_tbl.to_csv(
                 PATH_TO_OUTPUT_DIRECTORY +
-                f"/healpix_k{ITER_K}_partitions_{start_iterk_PIDS}-{end_iterk_PIDS}_cntr_to_cluster_map_tbl.csv"
+                f"/partition_{partition_k_pixel_id}_subpartitions_{start_iterk_PIDS}to{end_iterk_PIDS}_cntr_to_id.csv"
                 )
             pq.write_table(partition_k_cluster_to_data_map_tbl, 
-                PATH_TO_OUTPUT_DIRECTORY + f"/healpix_k{ITER_K}_partitions_{start_iterk_PIDS}-{end_iterk_PIDS}_cntr_to_cluster_map_tbl.csv")
+                PATH_TO_OUTPUT_DIRECTORY + f"/partition_{partition_k_pixel_id}_subpartitions_{start_iterk_PIDS}to{end_iterk_PIDS}_cntr_to_data.parquet")
             # Clear memory
             del partition_k_cntr_to_cluster_map_tbl
             del partition_k_cluster_to_cntr_map_tbl
@@ -181,8 +186,8 @@ def construct_filters(partition_k_pixel_id: int, iter_k_pixel_id: int):
     w1_snr_cutoff = pyarrow.compute.greater(w1snr, 4) 
     w2_snr_cutoff = pyarrow.compute.greater(w2snr, 4)
     snr_cutoff = w1_snr_cutoff | w2_snr_cutoff
-    w1_artifact_filter = pyarrow.compute.equal(pyarrow.compute.bit_wise_and(w1cc_map_field, 0b100000000), 0)
-    w2_artifact_filter = pyarrow.compute.equal(pyarrow.compute.bit_wise_and(w2cc_map_field, 0b100000000), 0)
+    w1_artifact_filter = pyarrow.compute.equal(pyarrow.compute.bit_wise_and(w1cc_map_field, 0b111111111), 0)
+    w2_artifact_filter = pyarrow.compute.equal(pyarrow.compute.bit_wise_and(w2cc_map_field, 0b111111111), 0)
     artifact_filter = w1_artifact_filter & w2_artifact_filter # According to database flags, checks that the detection is not spurious
 
     # Should not be on a diffraction spike at all, should not be a persistence or ghost artifact
@@ -221,19 +226,20 @@ def _construct_margin_filter(
     )
     return margin_filter
 
-@profile
 def cluster(pixel_tbl: pyarrow.Table, iter_k_pixel_id: int) -> pyarrow.Table:
     positional_tbl = pixel_tbl.select(["ra", "dec"]).to_pandas().to_numpy()
     # Converting to lon/lat in radians
     lon_lat = positional_tbl * np.pi / 180.0
     lon_lat[:, 0] = lon_lat[:, 0] - np.pi
 
+    lat_lon = lon_lat[:, [1, 0]]
+
     # cntr_to_cluster_id = pixel_tbl.select(["cntr"]).to_pandas()
     # cntr_to_cluster_id.insert(1, "cluster_id", pd.NA)
     cntrs = pixel_tbl.column("cntr").to_pandas()
     cluster_ids_np = np.zeros(len(cntrs), dtype=np.float32)
 
-    EPS = (0.85 / 3600) * np.pi / 180.0 # 1.25 arcseconds in radians
+    EPS = (0.85 / 3600) * np.pi / 180.0 
 
     dbscan = DBSCAN(
         eps=EPS, 
@@ -243,12 +249,11 @@ def cluster(pixel_tbl: pyarrow.Table, iter_k_pixel_id: int) -> pyarrow.Table:
         metric="haversine",
         leaf_size=5
         )
-    dbscan.fit(lon_lat)
+    dbscan.fit(lat_lon)
     labels = dbscan.labels_
 
     all_clusters = {} # All clusters, whether in margin or not. Labels are integers here, not cluster_ids
 
-    all_clusters = {}
     for label, indices in zip(labels, range(len(labels))):
         if label not in all_clusters:
             all_clusters[label] = []

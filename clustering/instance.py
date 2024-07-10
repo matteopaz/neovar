@@ -1,4 +1,4 @@
-from func import find_clusters_one_partition
+from func import find_clusters_one_partition 
 from datetime import datetime
 from time import perf_counter
 import pyarrow.parquet as pq
@@ -6,10 +6,10 @@ import pyarrow
 import pandas as pd
 import pyarrow.dataset
 import os
-import argparse
+import json
 from math import ceil, log2
 
-MAX_ROWS_TO_LOAD = 8 * 10**6 # 7 Million
+MAX_ROWS_TO_LOAD = 19 * 10**6 # 19 Million
 
 def log(*args):
     with open(PATH_TO_OUTFILE, "a") as f:
@@ -25,27 +25,21 @@ def sizeof(partition_id):
         nrows += df[df["healpix_k5"] == partition_id]["nrows"].values[0]
     return nrows
 
-try:
-    SLURM_JOB_ID = os.getenv("SLURM_JOB_ID")
-    SLURM_JOB_NAME = os.getenv("SLURM_JOB_NAME")
-    SLURM_ARRAY_TASK_N = int(os.getenv("SLURM_ARRAY_TASK_ID"))
-    SLURM_ARRAY_TASK_COUNT = int(os.getenv("SLURM_ARRAY_TASK_COUNT"))
-    TOTAL_TASKS = 12288
-    CHUNK_SIZE = TOTAL_TASKS // SLURM_ARRAY_TASK_COUNT
 
-    OUTFILE_NAME = SLURM_JOB_NAME + "_" + str(SLURM_ARRAY_TASK_N) + ".out"
-    PATH_TO_OUTFILE = "/home/mpaz/neowise-clustering/clustering/logs/" + OUTFILE_NAME
+assignments = list(json.load(open("/home/mpaz/neowise-clustering/clustering/assignments.json")))
 
-    start_idx = SLURM_ARRAY_TASK_N * CHUNK_SIZE
-    end_idx = start_idx + CHUNK_SIZE
-except:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--partition-id", type=int, default=-1)
-    args = parser.parse_args()
-    start_idx = args.partition_id
-    end_idx = start_idx + 1
+SLURM_JOB_ID = os.getenv("SLURM_JOB_ID")
+# SLURM_JOB_NAME = os.getenv("SLURM_JOB_NAME")
+SLURM_ARRAY_TASK_N = int(os.getenv("SLURM_ARRAY_TASK_ID"))
+# SLURM_ARRAY_TASK_COUNT = int(os.getenv("SLURM_ARRAY_TASK_COUNT"))
+# TOTAL_TASKS = 12288
+# # TOTAL_TASKS = len(unfinished_partitions())
+# CHUNK_SIZE = TOTAL_TASKS // SLURM_ARRAY_TASK_COUNT
 
-    log=print
+partitions_to_do = assignments[SLURM_ARRAY_TASK_N]
+
+OUTFILE_NAME = SLURM_JOB_ID + "_" + str(SLURM_ARRAY_TASK_N) + ".out"
+PATH_TO_OUTFILE = "/home/mpaz/neowise-clustering/clustering/logs/" + OUTFILE_NAME
 
 base_path = "/stage/irsa-data-parquet10/wise/neowiser/p1bs_psd/healpix_k5/" 
 year_path = "year<N>_skinny/neowiser-healpix_k5-year<N>_skinny.parquet/_metadata"
@@ -56,13 +50,23 @@ pyarrow.dataset.parquet_dataset(neowise_path(year), partitioning="hive") for yea
 ]
 neowise_ds = pyarrow.dataset.dataset(year_datasets)
 
-
-for partition_k_pixel_id in range(start_idx, end_idx):
+for partition_k_pixel_id in partitions_to_do:
     log("Beginning clustering on partition {} at {}".format(partition_k_pixel_id, datetime.now()))
 
     nrows = sizeof(partition_k_pixel_id)
     subdivisions = ceil(0.5 * log2(nrows / MAX_ROWS_TO_LOAD)) # Log 4 of the number of rows
     iter_k = 5 + subdivisions
+
+    iter_k = 5
+
+    if nrows < 80 * 10**6:
+        subdivisions = ceil(0.5 * log2(nrows / MAX_ROWS_TO_LOAD)) # Log 4 of the number of rows
+        iter_k = 5 + subdivisions
+    else:
+        subdivisions = ceil(0.5 * log2(nrows / 10**6))
+        iter_k = min(12, 5 + subdivisions)
+        from func_polar import find_clusters_one_partition
+
 
     log("Partition {} has {} rows. Using {} subdivisions - iter_k={}.".format(partition_k_pixel_id, nrows, subdivisions, iter_k))
 

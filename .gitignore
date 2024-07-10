@@ -167,3 +167,5 @@ cython_debug/
 *.parquet
 *.png
 *.out
+*.html
+*.json

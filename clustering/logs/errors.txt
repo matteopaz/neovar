@@ -1,0 +1,5 @@
+Error on partition 8277: std::bad_alloc
+Error on partition 8277: Memory usage is too high. Exiting to prevent crash.
+Error on partition 8277: std::bad_alloc
+Error on partition 8277: std::bad_alloc
+Error on partition 8277: std::bad_alloc

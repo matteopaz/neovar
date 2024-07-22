@@ -1,4 +1,4 @@
-from func import find_clusters_one_partition, change_k 
+from func_special import find_clusters_one_partition, change_k 
 from datetime import datetime
 from time import perf_counter
 import pyarrow.parquet as pq
@@ -8,6 +8,7 @@ import pyarrow.dataset
 import os
 import json
 from math import ceil, log2
+import random
 
 MAX_ROWS_TO_LOAD = 19 * 10**6
 
@@ -25,18 +26,15 @@ def sizeof(partition_id):
         nrows += df[df["healpix_k5"] == partition_id]["nrows"].values[0]
     return nrows
 
-
-assignments = list(json.load(open("/home/mpaz/neowise-clustering/clustering/assignments.json")))
+PART_ID = 8277
 
 SLURM_JOB_ID = os.getenv("SLURM_JOB_ID")
 # SLURM_JOB_NAME = os.getenv("SLURM_JOB_NAME")
 SLURM_ARRAY_TASK_N = int(os.getenv("SLURM_ARRAY_TASK_ID"))
-# SLURM_ARRAY_TASK_COUNT = int(os.getenv("SLURM_ARRAY_TASK_COUNT"))
+SLURM_ARRAY_TASK_COUNT = int(os.getenv("SLURM_ARRAY_TASK_COUNT"))
 # TOTAL_TASKS = 12288
 # # TOTAL_TASKS = len(unfinished_partitions())
 # CHUNK_SIZE = TOTAL_TASKS // SLURM_ARRAY_TASK_COUNT
-
-partitions_to_do = assignments[SLURM_ARRAY_TASK_N]
 
 OUTFILE_NAME = SLURM_JOB_ID + "_" + str(SLURM_ARRAY_TASK_N) + ".out"
 PATH_TO_OUTFILE = "/home/mpaz/neowise-clustering/clustering/logs/" + OUTFILE_NAME
@@ -50,11 +48,12 @@ pyarrow.dataset.parquet_dataset(neowise_path(year), partitioning="hive") for yea
 ]
 neowise_ds = pyarrow.dataset.dataset(year_datasets)
 
-for partition_k_pixel_id in partitions_to_do:
+for partition_k_pixel_id in [PART_ID]:
     log("Beginning clustering on partition {} at {}".format(partition_k_pixel_id, datetime.now()))
 
     nrows = sizeof(partition_k_pixel_id)
     subdivisions = ceil(0.5 * log2(nrows / MAX_ROWS_TO_LOAD)) # Log 4 of the number of rows
+    
 
     if nrows < 80 * 10**6:
         subdivisions = ceil(0.5 * log2(nrows / MAX_ROWS_TO_LOAD)) # Log 4 of the number of rows
@@ -63,11 +62,19 @@ for partition_k_pixel_id in partitions_to_do:
         subdivisions = ceil(0.5 * log2(nrows / 10**6))
         iter_k = min(12, 5 + subdivisions)
 
+    
+
+    iterkstodo = change_k(pix=partition_k_pixel_id, pix_k=5, new_k=iter_k)
+    random.Random(10).shuffle(iterkstodo) # Consistent shuffle
+    start = SLURM_ARRAY_TASK_N * len(iterkstodo) // SLURM_ARRAY_TASK_COUNT
+    end = (SLURM_ARRAY_TASK_N + 1) * len(iterkstodo) // SLURM_ARRAY_TASK_COUNT
+    iterkstodo = iterkstodo[start:end]
+
     log("Partition {} has {} rows. Using {} subdivisions - iter_k={}.".format(partition_k_pixel_id, nrows, subdivisions, iter_k))
 
     t1 = perf_counter()
     try:
-        cntrs_to_cluster_id, cluster_id_to_data = find_clusters_one_partition(partition_k_pixel_id, neowise_ds, iter_k=iter_k)
+        cntrs_to_cluster_id, cluster_id_to_data = find_clusters_one_partition(partition_k_pixel_id, neowise_ds, iter_k_ord=iter_k, iter_k_list=iterkstodo, log_outfile=PATH_TO_OUTFILE)
     except Exception as e:
         log(f"Error on partition {partition_k_pixel_id}: {e}")
         print(f"Error on partition {partition_k_pixel_id}: {e}", file=open("/home/mpaz/neowise-clustering/clustering/logs/errors.txt", "a"))
@@ -91,5 +98,5 @@ for partition_k_pixel_id in partitions_to_do:
     # Save the cluster map table to a file.
 
     PATH_TO_OUTPUT_DIRECTORY = "/home/mpaz/neowise-clustering/clustering/out"
-    cntrs_to_cluster_id.to_csv(f"{PATH_TO_OUTPUT_DIRECTORY}/partition_{partition_k_pixel_id}_cntr_to_cluster_id.csv", index=False)
-    pq.write_table(cluster_id_to_data, f"{PATH_TO_OUTPUT_DIRECTORY}/partition_{partition_k_pixel_id}_cluster_id_to_data.parquet")
+    cntrs_to_cluster_id.to_csv(f"{PATH_TO_OUTPUT_DIRECTORY}/partition_{partition_k_pixel_id}_{SLURM_ARRAY_TASK_N}_cntr_to_cluster_id.csv", index=False)
+    pq.write_table(cluster_id_to_data, f"{PATH_TO_OUTPUT_DIRECTORY}/partition_{partition_k_pixel_id}_{SLURM_ARRAY_TASK_N}_cluster_id_to_data.parquet")

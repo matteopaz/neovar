@@ -34,7 +34,7 @@ def live_plot(interval=1):
 
     while True:
         hpmap = ids_to_map()
-        hp.visufunc.mollview(hpmap, title="Apparitions per partition", cmap=cmap, min=0, xsize=2000)
+        hp.visufunc.orthview(hpmap, title="Apparitions per partition", cmap=cmap, min=0, xsize=2000)
         hp.visufunc.graticule()
         # write current plot to a file
         plt.savefig("./logs/apparitions.png")

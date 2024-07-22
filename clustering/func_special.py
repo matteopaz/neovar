@@ -11,14 +11,13 @@ import pandas as pd
 import psutil
 from line_profiler import profile
 from time import perf_counter
-# import plotly.graph_objects as go
 
 
 
 PARTITION_K = 5
 PARTITION_NSIDE = hpgeom.order_to_nside(order=PARTITION_K)
 
-# [TODO]
+
 # Set MAX_K to the max order stored in the new files.
 MAX_K = 13
 # Choose ITER_K such that one pixel plus the margin fits comfortably in memory (all rows, all years).
@@ -28,20 +27,8 @@ ITER_K = 5
 # To see how big a pixel is, you may want to use an hpgeom method like max_pixel_radius or nside_to_pixel_area.
 MARGIN_K = 13
 
-POLAR_REGION = FALSE
+POLAR_REGION = False
 
-
-# def run():
-#     base_path = "/stage/irsa-data-parquetlinks/links-tmp/neowiser/healpix_k5/"
-#     year_path = "year<N>_skinny/neowiser-healpix_k5-year<N>_skinny.parquet/_metadata"
-#     neowise_path = lambda year: base_path + year_path.replace("<N>", str(year))
-#     year_datasets = [
-#     pyarrow.dataset.parquet_dataset(neowise_path(year), partitioning="hive") for year in range(1, 11)
-#     ]
-#     neowise_ds = pyarrow.dataset.dataset(year_datasets)
-#     # for partition_k_pixel_id in range(hpgeom.nside_to_npixel(PARTITION_NSIDE)):  # [TODO] check
-#     partition_k_pixel_id = 10936
-#     find_clusters_one_partition(partition_k_pixel_id, neowise_ds)
 
 def get_memory_usage_pct():
     return psutil.virtual_memory().percent
@@ -57,8 +44,37 @@ class ChunkedDataset:
             "mjd", "w1flux", "w1sigflux", "w2flux", "w2sigflux",
             "qual_frame", "w1rchi2", "w2rchi2", "healpix_k5", "healpix_k13"
         ]
-        self.chunks = []
+        self.chunk = []
         self.current_tbl = None
+
+    def quality_filters(self):
+        w1flux_field = pyarrow.compute.field("w1flux")
+        w1sigflux_field = pyarrow.compute.field("w1sigflux")
+        w2flux_field = pyarrow.compute.field("w2flux")
+        w2sigflux_field = pyarrow.compute.field("w2sigflux")
+        w1cc_map_field = pyarrow.compute.field("w1cc_map")
+        w2cc_map_field = pyarrow.compute.field("w2cc_map")
+
+        w1_real_detection = pyarrow.compute.invert(pyarrow.compute.is_null(w1sigflux_field))
+        w2_real_detection = pyarrow.compute.invert(pyarrow.compute.is_null(w2sigflux_field))
+        real_detection_filter = w1_real_detection | w2_real_detection
+
+        w1snr = pyarrow.compute.if_else(w1_real_detection, pyarrow.compute.divide(w1flux_field, w1sigflux_field), 0) # If else to prevent error
+        w2snr = pyarrow.compute.if_else(w2_real_detection, pyarrow.compute.divide(w2flux_field, w2sigflux_field), 0)
+
+        w1_snr_cutoff = pyarrow.compute.greater(w1snr, 4) 
+        w2_snr_cutoff = pyarrow.compute.greater(w2snr, 4)
+        snr_cutoff = w1_snr_cutoff | w2_snr_cutoff
+        w1_artifact_filter = pyarrow.compute.equal(pyarrow.compute.bit_wise_and(w1cc_map_field, 0b111111111), 0)
+        w2_artifact_filter = pyarrow.compute.equal(pyarrow.compute.bit_wise_and(w2cc_map_field, 0b111111111), 0)
+        artifact_filter = w1_artifact_filter & w2_artifact_filter # According to database flags, checks that the detection is not spurious
+
+        # Should not be on a diffraction spike at all, should not be a persistence or ghost artifact
+
+        # quality_filter = snr_cutoff & artifact_filter
+        quality_filter = real_detection_filter & snr_cutoff & artifact_filter
+
+        return quality_filter
     
     def query_next_chunk(self):
         if len(self.iter_ks) <= self.index:
@@ -67,12 +83,9 @@ class ChunkedDataset:
         iter_ks_chunk = self.iter_ks[self.index:self.index+self.chunk_size]
         filters = self.construct_filters_multiple(iter_ks_chunk)
  
-        # print("starting to get table")
-        t1 = perf_counter()
         pixel_tbl = self.ds.to_table(columns=self.columns, filter=filters)
-        # print("got table of {} rows in {}s, {} mem consumpt".format(len(pixel_tbl), perf_counter() - t1, get_memory_usage_pct()))
         self.current_tbl = pixel_tbl
-        self.chunks = iter_ks_chunk
+        self.chunk = iter_ks_chunk
         return
 
     def construct_filters_multiple(self, iter_ks: list[int]):
@@ -100,7 +113,7 @@ class ChunkedDataset:
             border_margin_ids + margin_k_pixels_within_iter_k_pixel
         )
 
-        quality_filter = quality_filters()
+        quality_filter = self.quality_filters()
 
         return pixel_filter_with_margin & quality_filter
 
@@ -120,31 +133,78 @@ class ChunkedDataset:
     
     def __next__(self):
         if self.index >= len(self.iter_ks):
-            raise StopIteration("No more chunks to query")
+            raise StopIteration
+        
+        iter_k_id = self.iter_ks[self.index]
 
-        if self.iter_ks[self.index] not in self.chunks:
+        if iter_k_id not in self.chunk:
             self.query_next_chunk()
         
         if self.chunk_size == 1:
-            return self.current_tbl, self.iter_ks[self.index]
+            self.index += 1 
+            return self.current_tbl, iter_k_id
         
-        t1 = perf_counter()
-        posfilter = pixel_filters(self.partition_k, self.iter_ks[self.index])
+        posfilter = pixel_filters(self.partition_k, iter_k_id)
         filtered_tbl = self.current_tbl.filter(posfilter)
-        # print("{}s spend retrieving chunked subtable".format(perf_counter() - t1))
+        
         self.index += 1
-
-        return filtered_tbl, self.iter_ks[self.index]
+        return filtered_tbl, iter_k_id
     
+def pixel_filters(partition_k_pixel_id: int, iter_k_pixel_id: int, include_partition_k=True):
+    partition_k_field = pyarrow.compute.field(f"healpix_k5").cast(pyarrow.int32())
+    max_k_field = pyarrow.compute.field(f"healpix_k13").cast(pyarrow.int32())
+    iter_k_field = change_k(pix=max_k_field, pix_k=MAX_K, new_k=ITER_K, return_field=True)
+    margin_k_field = change_k(pix=max_k_field, pix_k=MAX_K, new_k=MARGIN_K, return_field=True)
 
-def find_clusters_one_partition(partition_k_pixel_id: int, neowise_ds: pyarrow.dataset.Dataset, iter_k=ITER_K):
+    if include_partition_k:
+        pixel_filter = pyarrow.compute.equal(partition_k_field, partition_k_pixel_id) & pyarrow.compute.equal(iter_k_field, iter_k_pixel_id)
+    else:
+        pixel_filter = pyarrow.compute.equal(iter_k_field, iter_k_pixel_id)
+
+    margin_filter = _construct_margin_filter(
+        partition_k_pixel_id, iter_k_pixel_id, partition_k_field, margin_k_field
+    )
+
+    filter = (pixel_filter | margin_filter)
+
+    return filter
+
+def _construct_margin_filter(
+    partition_k_pixel_id: int,
+    iter_k_pixel_id: int,
+    partition_k_field: pyarrow.Field,
+    margin_k_field: pyarrow.Field,
+):
+    # Find the MARGIN_K pixels that border the ITER_K pixel. This uses hpgeom, but
+    # there's probably a better way to do it with pure math (healpix nested ordering scheme).
+    margin_k_pixels_within_iter_k_pixel = change_k(pix=iter_k_pixel_id, pix_k=ITER_K, new_k=MARGIN_K)
+    all_neighbors = hpgeom.neighbors(
+        nside=hpgeom.order_to_nside(MARGIN_K), pix=margin_k_pixels_within_iter_k_pixel, nest=True
+    )
+    all_neighbors_clean = [n for n in all_neighbors.flatten() if n != -1]  # -1 means no neighbor at that position
+    border_margin_ids = sorted(set(all_neighbors_clean) - set(margin_k_pixels_within_iter_k_pixel))
+
+    # Find neighboring partition_k pixels so we can include a filter on the partition column.
+    partition_neighbor_ids = sorted(
+        set([change_k(pix=pix, pix_k=MARGIN_K, new_k=PARTITION_K) for pix in border_margin_ids])
+    )
+
+    # Construct the margin filter.
+    margin_filter = partition_k_field.isin([partition_k_pixel_id] + partition_neighbor_ids) & margin_k_field.isin(
+        border_margin_ids
+    )
+    return margin_filter
+
+def find_clusters_one_partition(partition_k_pixel_id: int, neowise_ds: pyarrow.dataset.Dataset, iter_k_ord: int, iter_k_list: list[int], log_outfile=None):
     global ITER_K
-    ITER_K = iter_k
+    ITER_K = iter_k_ord
 
-    
+    if iter_k_ord > 6:
+        global POLAR_REGION
+        POLAR_REGION = True
 
     # Get the list of iter_k pixels to iterate over.
-    iter_k_pixel_ids = change_k(pix=partition_k_pixel_id, pix_k=PARTITION_K, new_k=ITER_K)
+    iter_k_pixel_ids = iter_k_list
     if ITER_K == PARTITION_K:
         iter_k_pixel_ids = [iter_k_pixel_ids]
     
@@ -154,13 +214,16 @@ def find_clusters_one_partition(partition_k_pixel_id: int, neowise_ds: pyarrow.d
     iter_k_cntr_to_cluster_map_tbls = []
     iter_k_cluster_to_data_map_tbls = []
 
-    chunksize = max(1, 4*(iter_k - 5))
+    chunksize = max(1, 2**(iter_k_ord - 5))
 
 
     for pixel_tbl, iter_k_pixel_id in ChunkedDataset(neowise_ds, partition_k_pixel_id, iter_k_pixel_ids, chunksize):
         t1 = perf_counter()
+
+        with open(log_outfile, "a") as f:
+            f.write(f"Pixel table for iterkid {iter_k_pixel_id} has {pixel_tbl.num_rows} rows")
+
         iter_k_cntr_to_cluster_map_tbl, iter_k_cluster_to_data_map_tbl = cluster(pixel_tbl, iter_k_pixel_id)
-        print("Finished clustering step in {}s".format(perf_counter() - t1))
 
         tbl_list_entry_ids.append(iter_k_pixel_id)
         iter_k_cntr_to_cluster_map_tbls.append(iter_k_cntr_to_cluster_map_tbl)
@@ -171,7 +234,6 @@ def find_clusters_one_partition(partition_k_pixel_id: int, neowise_ds: pyarrow.d
             raise MemoryError("Memory usage is too high. Exiting to prevent crash.")
 
         if get_memory_usage_pct() > 75:
-            # print("Memory usage is high. Writing to disk and clearing memory")
             start_iterk_PIDS = tbl_list_entry_ids[0]
             end_iterk_PIDS = tbl_list_entry_ids[-1]
             partition_k_cntr_to_cluster_map_tbl = pd.concat(iter_k_cntr_to_cluster_map_tbls, axis=0)
@@ -224,174 +286,75 @@ def change_k(*, pix: int, pix_k: int, new_k: int, return_field=False) -> int | l
         return [pix * 4**koffset + ki for ki in range(4**koffset)]
     return pix
 
-def pixel_filters(partition_k_pixel_id: int, iter_k_pixel_id: int, include_partition_k=True):
-    partition_k_field = pyarrow.compute.field(f"healpix_k5").cast(pyarrow.int32())
-    max_k_field = pyarrow.compute.field(f"healpix_k13").cast(pyarrow.int32())
-    iter_k_field = change_k(pix=max_k_field, pix_k=MAX_K, new_k=ITER_K, return_field=True)
-    margin_k_field = change_k(pix=max_k_field, pix_k=MAX_K, new_k=MARGIN_K, return_field=True)
-
-    if include_partition_k:
-        pixel_filter = pyarrow.compute.equal(partition_k_field, partition_k_pixel_id) & pyarrow.compute.equal(iter_k_field, iter_k_pixel_id)
-    else:
-        pixel_filter = pyarrow.compute.equal(iter_k_field, iter_k_pixel_id)
-
-    margin_filter = _construct_margin_filter(
-        partition_k_pixel_id, iter_k_pixel_id, partition_k_field, margin_k_field
-    )
-
-    filter = (pixel_filter | margin_filter)
-
-    return filter
-
-def quality_filters():
-    w1flux_field = pyarrow.compute.field("w1flux")
-    w1sigflux_field = pyarrow.compute.field("w1sigflux")
-    w2flux_field = pyarrow.compute.field("w2flux")
-    w2sigflux_field = pyarrow.compute.field("w2sigflux")
-    w1cc_map_field = pyarrow.compute.field("w1cc_map")
-    w2cc_map_field = pyarrow.compute.field("w2cc_map")
-
-    w1_real_detection = pyarrow.compute.invert(pyarrow.compute.is_null(w1sigflux_field))
-    w2_real_detection = pyarrow.compute.invert(pyarrow.compute.is_null(w2sigflux_field))
-    real_detection_filter = w1_real_detection | w2_real_detection
-
-    w1snr = pyarrow.compute.if_else(w1_real_detection, pyarrow.compute.divide(w1flux_field, w1sigflux_field), 0) # If else to prevent error
-    w2snr = pyarrow.compute.if_else(w2_real_detection, pyarrow.compute.divide(w2flux_field, w2sigflux_field), 0)
-
-    w1_snr_cutoff = pyarrow.compute.greater(w1snr, 4) 
-    w2_snr_cutoff = pyarrow.compute.greater(w2snr, 4)
-    snr_cutoff = w1_snr_cutoff | w2_snr_cutoff
-    w1_artifact_filter = pyarrow.compute.equal(pyarrow.compute.bit_wise_and(w1cc_map_field, 0b111111111), 0)
-    w2_artifact_filter = pyarrow.compute.equal(pyarrow.compute.bit_wise_and(w2cc_map_field, 0b111111111), 0)
-    artifact_filter = w1_artifact_filter & w2_artifact_filter # According to database flags, checks that the detection is not spurious
-
-    # Should not be on a diffraction spike at all, should not be a persistence or ghost artifact
-
-    # quality_filter = snr_cutoff & artifact_filter
-    quality_filter = real_detection_filter & snr_cutoff & artifact_filter
-
-    return quality_filter
-
-def construct_filters(partition_k_pixel_id: int, iter_k_pixel_id: int):
-    """Return a pyarrow filter that selects rows if they are in either the ITER_K pixel or
-    the MARGIN_K pixels along its border (outside).
-
-    It's important to include filters on the partitioning column for speed even though it doesn't
-    change the results.
-    """
-
-    positional_filter = pixel_filters(partition_k_pixel_id, iter_k_pixel_id)
-    quality_filter = quality_filters(partition_k_pixel_id, iter_k_pixel_id)
-
-    filters = positional_filter & quality_filter
-    return filters
-
-
-def _construct_margin_filter(
-    partition_k_pixel_id: int,
-    iter_k_pixel_id: int,
-    partition_k_field: pyarrow.Field,
-    margin_k_field: pyarrow.Field,
-):
-    # Find the MARGIN_K pixels that border the ITER_K pixel. This uses hpgeom, but
-    # there's probably a better way to do it with pure math (healpix nested ordering scheme).
-    margin_k_pixels_within_iter_k_pixel = change_k(pix=iter_k_pixel_id, pix_k=ITER_K, new_k=MARGIN_K)
-    all_neighbors = hpgeom.neighbors(
-        nside=hpgeom.order_to_nside(MARGIN_K), pix=margin_k_pixels_within_iter_k_pixel, nest=True
-    )
-    all_neighbors_clean = [n for n in all_neighbors.flatten() if n != -1]  # -1 means no neighbor at that position
-    border_margin_ids = sorted(set(all_neighbors_clean) - set(margin_k_pixels_within_iter_k_pixel))
-
-    # Find neighboring partition_k pixels so we can include a filter on the partition column.
-    partition_neighbor_ids = sorted(
-        set([change_k(pix=pix, pix_k=MARGIN_K, new_k=PARTITION_K) for pix in border_margin_ids])
-    )
-
-    # Construct the margin filter.
-    margin_filter = partition_k_field.isin([partition_k_pixel_id] + partition_neighbor_ids) & margin_k_field.isin(
-        border_margin_ids
-    )
-    return margin_filter
-
 @profile
 def cluster(pixel_tbl: pyarrow.Table, iter_k_pixel_id: int) -> pyarrow.Table:
     positional_tbl = pixel_tbl.select(["ra", "dec"]).to_pandas().to_numpy()
-    # Converting to lon/lat in radians
-    lon_lat = positional_tbl * np.pi / 180.0
-    lon_lat[:, 0] = lon_lat[:, 0] - np.pi
-
-    lat_lon = lon_lat[:, [1, 0]]
+    positional_tbl = np.radians(positional_tbl)
+    latlon = positional_tbl[:, [1,0]]
 
     # cntr_to_cluster_id = pixel_tbl.select(["cntr"]).to_pandas()
     # cntr_to_cluster_id.insert(1, "cluster_id", pd.NA)
     cntrs = pixel_tbl.column("cntr").to_pandas()
-    cluster_ids_np = np.zeros(len(cntrs), dtype=np.float32)
+    cluster_ids_np = np.zeros(len(cntrs), dtype=np.int64)
 
     EPS = (0.85 / 3600) * np.pi / 180.0
+    min_samples = 12
+    leaf_size = 5
+
+    if POLAR_REGION:
+        min_samples = 96
+        leaf_size = 15
 
     dbscan = DBSCAN(
         eps=EPS, 
-        min_samples=96, 
+        min_samples=min_samples, 
         n_jobs=-1, 
         algorithm="ball_tree",
         metric="haversine",
-        leaf_size=5
+        leaf_size=leaf_size
         )
-    dbscan.fit(lat_lon)
+    dbscan.fit(latlon)
     labels = dbscan.labels_
 
     all_clusters = {} # All clusters, whether in margin or not. Labels are integers here, not cluster_ids
-
-    for label, indices in zip(labels, range(len(labels))):
+    
+    for idx, label in enumerate(labels):
         if label not in all_clusters:
             all_clusters[label] = []
-        all_clusters[label].append(indices)
+        all_clusters[label].append(idx)
 
     if -1 not in all_clusters:
         raise Warning("No noise label found in DBSCAN clustering in iter_k_pixel_id={}. Highly unusual".format(iter_k_pixel_id))
     else:
         del all_clusters[-1]  # Remove noise label
 
+
     for label, indices in list(all_clusters.items()):
         if len(indices) < 16: # Delete tiny clusters
             del all_clusters[label] # Save to list to delete later, cannot delete while iterating
+            continue
 
-    for label, indices in list(all_clusters.items()):
-        lon_lat_in_cluster = lon_lat[indices] # Acquire the positions of cluster members
+        ra_dec_in_cluster = positional_tbl[indices] # Acquire the positions of cluster members
 
-        longitude_in_cluster = lon_lat_in_cluster[:, 0] # Extract the longitude and latitude separately
-        latitude_in_cluster = lon_lat_in_cluster[:, 1]
+        ra_in_cluster = ra_dec_in_cluster[:, 0] # Extract the longitude and latitude separately
+        dec_in_cluster = ra_dec_in_cluster[:, 1]
 
-        cosine_of_latitude = np.cos(latitude_in_cluster) # Precompute this value
+        cosine_of_latitude = np.cos(dec_in_cluster) # Precompute this value
         cartesian_in_cluster = np.array([
-            cosine_of_latitude * np.cos(longitude_in_cluster), 
-            cosine_of_latitude * np.sin(longitude_in_cluster), 
-            np.sin(latitude_in_cluster)]).T
+            cosine_of_latitude * np.cos(ra_in_cluster), 
+            cosine_of_latitude * np.sin(ra_in_cluster), 
+            np.sin(dec_in_cluster)]).T
         cartesian_centroid = np.mean(cartesian_in_cluster, axis=0) # Convert to cartesian and take the mean. Accounts for spherical geometry and wrapping around 0/360
-        centroid_lon, centroid_lat = hpgeom.hpgeom.vector_to_angle(cartesian_centroid, lonlat=True, degrees=False) # Convert back to spherical coordinates of RA, DEC
-        centroid_RA, centroid_Dec = (centroid_lon * 180 / np.pi + 180.0, centroid_lat * 180 / np.pi) # Convert to degrees and shift long
+        centroid_RA, centroid_Dec = hpgeom.hpgeom.vector_to_angle(cartesian_centroid, lonlat=True, degrees=True) # Convert back to spherical coordinates of RA, DEC
 
         # Check if the centroid of the cluster lies within the ITER_K pixel. If it does not, we do not include it in this write. It will be included in the adjacent pixel's write.
         partition_k_pixel_id = change_k(pix=iter_k_pixel_id, pix_k=ITER_K, new_k=PARTITION_K)
 
-        belongs_to_iter_k_pixel = hpgeom.hpgeom.angle_to_pixel(hpgeom.order_to_nside(ITER_K), centroid_lon + np.pi, centroid_lat, degrees=False, lonlat=True)[0]
+        belongs_to_iter_k_pixel = hpgeom.hpgeom.angle_to_pixel(hpgeom.order_to_nside(ITER_K), centroid_RA, centroid_Dec, degrees=True, lonlat=True)[0]
         if belongs_to_iter_k_pixel == iter_k_pixel_id:
-
-
-            # cluster_designation = "{:.4f}".format(float(centroid_RA)).zfill(8) + ("+" if centroid_Dec > 0 else "-") + "{:.4f}".format(float(np.abs(centroid_Dec))).zfill(7) # Create a unique cluster_id
-
-            # Constructing binary cluster_id
-            trunc_RA = np.round(centroid_RA, 4) 
-            trunc_Dec = np.round(centroid_Dec, 4)
-            partition_k_id_bin = np.binary_repr(partition_k_pixel_id, width=16)
-            trunc_RA_bin = np.binary_repr(int(trunc_RA * 10000), width=24)
-            trunc_Dec_bin = np.binary_repr(int(trunc_Dec * 10000), width=24)
-            cluster_id = partition_k_id_bin + trunc_RA_bin + trunc_Dec_bin # 64 bit integer with leading 16 bits for partition_k_pixel_id, 24 bits for RA, 24 bits for Dec
-            cluster_id = int(cluster_id, 2) # to integer
-            
-            all_clusters[cluster_id] = all_clusters.pop(label) # Rename the cluster_id
-            # cntr_to_cluster_id.loc[indices, "cluster_id"] = cluster_id
-            cluster_ids_np[indices] = cluster_id
+            cluster_id = get_cluster_id(partition_k_pixel_id, centroid_RA, centroid_Dec)
+            all_clusters[cluster_id] = all_clusters.pop(label) # Rename the label to cluster_id
+            cluster_ids_np[indices] = cluster_id # set the correct cntrs to the cluster_id
         else:
             del all_clusters[label] # Remove the cluster from the dictionary if it does not belong to the current pixel
 
@@ -402,7 +365,20 @@ def cluster(pixel_tbl: pyarrow.Table, iter_k_pixel_id: int) -> pyarrow.Table:
 
     return clean_cntr_to_cluster_id, cluster_id_to_data
 
-@profile
+def get_cluster_id(partition_k_id, center_ra, center_dec):
+    # Truncate to required specificity
+    trunc_RA = np.round(center_ra, 4)
+    colat = 90.0 - center_dec
+    trunc_colat = np.round(colat, 4)
+    partition_k_id_bin = np.binary_repr(int(partition_k_id), width=16)
+
+    bin_ra = np.binary_repr(int(trunc_RA * 10000), width=24)
+    bin_colat = np.binary_repr(int(trunc_colat * 10000), width=24)
+    cluster_id = partition_k_id_bin + bin_ra + bin_colat
+    cluster_id = int(cluster_id, 2)
+    return cluster_id
+
+
 def dict_to_data_tbl(d: dict, data_tbl: pyarrow.Table):
     # Schema should be an ID int64, a list of ID Strings
     schema = pyarrow.schema([

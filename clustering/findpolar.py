@@ -5,41 +5,16 @@ from hpgeom import hpgeom as h
 import numpy as np
 from hpgeom import hpgeom as h
 
-def find_pixels(lat, lon, order=5, distance_deg=0.5):
-    # Convert latitude and longitude from degrees to radians
-    lat_rad = np.radians(lat)
-    lon_rad = np.radians(lon)
-    
-    # Convert distance from degrees to radians
-    distance_rad = np.radians(distance_deg)
-    
-    # Find the pixel index for the given point at the specified order
-    pixel_index = h.angle_to_pixel(lon_rad, lat_rad, 2**order)
-    
-    # Find all neighboring pixels
-    neighbors = h.neighbours(pixel_index, 2**order)
-    
-    # Initialize a list to hold pixels within the specified distance
-    pixels_within_distance = []
-    
-    # Check each neighbor (and the original pixel) for distance
-    for neighbor in np.append(neighbors, pixel_index):
-        # Get the center point of the neighbor pixel
-        neighbor_lat, neighbor_lon = h.healpix_to_lonlat(neighbor, 2**order)
-        
-        # Calculate the angular distance to the original point
-        ang_distance = h.angular_distance(lon_rad, lat_rad, neighbor_lon, neighbor_lat)
-        
-        # If the distance is within the specified limit, add to the list
-        if ang_distance <= distance_rad:
-            pixels_within_distance.append(neighbor)
-    
-    return pixels_within_distance
+x_center = 270
+y_center = 66.54
+rad = 0.212
 
-# Example usage for the points (90, 66.54) and (-90, 66.54)
-pixels_1 = find_pixels(66.54, 90)
-pixels_2 = find_pixels(66.54, -90)
+x = np.linspace(x_center - rad, x_center + rad, 250)
+y = [[np.sqrt(rad**2 - (xi - x_center)**2) + y_center, -np.sqrt(rad**2 - (xi - x_center)**2) + y_center] for xi in x]
+y = np.array(y).flatten()
+x = np.array([xi for xi in x for _ in range(2)])
+pix = h.angle_to_pixel(32, x, y)
+pix = set(pix)
 
-print("Pixels near (90, 66.54):", pixels_1)
-print("Pixels near (-90, 66.54):", pixels_2)
+print(pix)
 

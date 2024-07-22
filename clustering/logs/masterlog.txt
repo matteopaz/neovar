@@ -1,10 +1,13 @@
-Partition 8277 complete in 123.06746105570346s. 120 clusters. 433686 apparitions.
-Partition 10096 complete in 170.42520206142217s. 24449 clusters. 6737286 apparitions.
-Partition 12287 complete in 178.89142783731222s. 29737 clusters. 6602097 apparitions.
-Partition 12287 complete in 176.54950315132737s. 29737 clusters. 6602097 apparitions.
-Partition 0 complete in 92.65449034329504s. 15749 clusters. 3690480 apparitions.
-Partition 10101 complete in 137.67651770822704s. 22025 clusters. 5987944 apparitions.
-Partition 10101 complete in 134.10408053640276s. 22025 clusters. 5987944 apparitions.
-Partition 10101 complete in 148.55020117014647s. 22025 clusters. 5987944 apparitions.
-Partition 10101 complete in 163.17984430491924s. 22025 clusters. 5987944 apparitions.
-Partition 2901 complete in 2476.9163816114888s. 5408 clusters. 28338669 apparitions.
+Error on partition 8277: std::bad_alloc
+Error on partition 8277: Memory usage is too high. Exiting to prevent crash.
+Partition 8277 complete in 2072.9463488822803s. 2226 clusters. 17767850 apparitions.
+Partition 8277 complete in 2392.0973029872403s. 933 clusters. 7650008 apparitions.
+Error on partition 8277: std::bad_alloc
+Partition 8277 complete in 1821.9020289527252s. 2137 clusters. 17072796 apparitions.
+Partition 8277 complete in 1424.1545438850299s. 2053 clusters. 14460732 apparitions.
+Partition 8277 complete in 1520.6614820603281s. 2239 clusters. 16255645 apparitions.
+Partition 2559 complete in 7394.296094601974s. 1212 clusters. 8207773 apparitions.
+Partition 8277 complete in 1821.1471884092316s. 2245 clusters. 16139035 apparitions.
+Error on partition 8277: std::bad_alloc
+Error on partition 8277: std::bad_alloc
+Partition 8277 complete in 5498.87368452549s. 1235 clusters. 8793061 apparitions.

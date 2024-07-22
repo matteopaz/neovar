@@ -1,4 +1,4 @@
-from func_final import find_clusters_one_partition 
+from func import find_clusters_one_partition 
 from datetime import datetime
 from time import perf_counter
 import pyarrow.parquet as pq
@@ -21,7 +21,7 @@ def sizeof(partition_id):
         nrows += df[df["healpix_k5"] == partition_id]["nrows"].values[0]
     return nrows
 
-partition_k_pixel_id = 2901
+partition_k_pixel_id = 0
 
 base_path = "/stage/irsa-data-parquet10/wise/neowiser/p1bs_psd/healpix_k5/" 
 year_path = "year<N>_skinny/neowiser-healpix_k5-year<N>_skinny.parquet/_metadata"

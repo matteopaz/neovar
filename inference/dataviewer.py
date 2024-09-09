@@ -48,7 +48,7 @@ def plot(row):
     w2sigmag = np.abs(w2mag - (-2.5 * np.log10((w2 + w2s) / 171.787)))
 
     # fodl
-    bestperiod = ab.periodbase.spdm.stellingwerf_pdm(mjd, w1mag, w1sigmag)["bestperiod"]
+    # bestperiod = ab.periodbase.spdm.stellingwerf_pdm(mjd, w1mag, w1sigmag)["bestperiod"]
 
     w1tr = go.Scatter(x=mjd, y=w1mag, mode="markers", name="W1", error_y=dict(type="data", array=w1sigmag, visible=True, thickness=0.5, color="rgba(0,0,0,0.3)"), marker=dict(color="blue"))
     w2tr = go.Scatter(x=mjd, y=w2mag, mode="markers", name="W2", error_y=dict(type="data", array=w2sigmag, visible=True, thickness=0.5, color="rgba(0,0,0,0.3)"), marker=dict(color="orange"))
@@ -58,9 +58,9 @@ def plot(row):
     # flip y axis
     fig.update_yaxes(autorange="reversed")
 
-    w1tr_fold = go.Scatter(x=mjd % bestperiod, y=w1mag, mode="markers", name="W1", error_y=dict(type="data", array=w1sigmag, visible=True, thickness=0.5, color="rgba(0,0,0,0.3)"), marker=dict(color="blue"))
-    w2tr_fold = go.Scatter(x=mjd % bestperiod, y=w2mag, mode="markers", name="W2", error_y=dict(type="data", array=w2sigmag, visible=True, thickness=0.5, color="rgba(0,0,0,0.3)"), marker=dict(color="orange"))
-    fold = go.Figure([w1tr_fold, w2tr_fold])
+    # w1tr_fold = go.Scatter(x=mjd % bestperiod, y=w1mag, mode="markers", name="W1", error_y=dict(type="data", array=w1sigmag, visible=True, thickness=0.5, color="rgba(0,0,0,0.3)"), marker=dict(color="blue"))
+    # w2tr_fold = go.Scatter(x=mjd % bestperiod, y=w2mag, mode="markers", name="W2", error_y=dict(type="data", array=w2sigmag, visible=True, thickness=0.5, color="rgba(0,0,0,0.3)"), marker=dict(color="orange"))
+    # fold = go.Figure([w1tr_fold, w2tr_fold])
     fold.update_yaxes(autorange="reversed")
 
     return fig, fold

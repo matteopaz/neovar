@@ -3,26 +3,32 @@ from transient_analysis import classify_transient
 from load_data import PartitionDataLoader
 import torch
 import pandas as pd
+import numpy as np
 import pickle
-from model import CNFourierModel
+from model import WCNFourierModel
 from time import perf_counter as pc
 import warnings
 
+torch.set_default_device("cuda")
 warnings.filterwarnings("ignore", category=UserWarning, module="torch")
-modelname = "GOOD"
-params = pickle.load(open(f"/local/home/mpaz/neovar/inference/model/{modelname}.pkl", "rb"))
-model = CNFourierModel(**params).cuda()
-model.load_state_dict(torch.load(f"/local/home/mpaz/neovar/inference/model/{modelname}.pt"))
+modelname = "newvalid_best"
+params = pickle.load(open(f"/home/mpaz/neovar/inference/model/{modelname}.pkl", "rb"))
+model = WCNFourierModel(**params).cuda()
+model.load_state_dict(torch.load(f"/home/mpaz/neovar/inference/model/{modelname}.pt"))
 model.eval().cuda()
-BATCHSIZE = 2048
+BATCHSIZE = 384
+CONFIDENCE_THRESH = 0.90
 
 print("Model loaded: {}".format(modelname))
 
+SAVE_DATA = True
+
 
 def run_partition(partition_id: int):
-    partition = pd.read_parquet(f"./in/partition_{partition_id}_cluster_id_to_data.parquet")
-    dataloader = PartitionDataLoader(partition, BATCHSIZE, prefilter=False)
+    partition = pd.read_parquet(f"/home/mpaz/neowise-clustering/clustering/out/partition_{partition_id}_cluster_id_to_data.parquet")
+    dataloader = PartitionDataLoader(partition, BATCHSIZE)
     subcatalogs = []
+    datacatalogs = []
 
     i = 1
     for table, model_tensor in dataloader:
@@ -31,26 +37,30 @@ def run_partition(partition_id: int):
         probs = model(model_tensor.cuda())
         probs = torch.softmax(probs, dim=1)
         maxes, l1_classes = torch.max(probs, dim=1)
-        confident = maxes > 0.8
-        maxes = maxes.squeeze()
-        table["conf"] = maxes.detach().cpu().numpy()
-        l1_classes = l1_classes.squeeze()
+        
+        table["type"] = l1_classes.detach().cpu().numpy()
+        table["type"] = table["type"].map({0: pd.NA, 1: "transient", 2: "periodic"})
+        table["confidence"] = maxes.detach().cpu().numpy()
 
-        transient_indices = torch.logical_and(l1_classes == 1, confident).nonzero(as_tuple=True)[0].cpu()
-        periodic_indices = torch.logical_and(l1_classes == 2, confident).nonzero(as_tuple=True)[0].cpu()
+        table = table[table["type"].notna() & (table["confidence"] > CONFIDENCE_THRESH)]
 
-        transients = table.iloc[transient_indices].copy()
-        periodic = table.iloc[periodic_indices].copy()
+        transient_subcatalog = classify_transient(table)
+        periodic_subcatalog = classify_periodic(table)
 
-        transient_subcatalog = classify_transient(transients)
-        periodic_subcatalog = classify_periodic(periodic)
+        table = table[table["type"].notna()]
 
         if len(transient_subcatalog) > 0:
             subcatalogs.append(transient_subcatalog)
         if len(periodic_subcatalog) > 0:
             subcatalogs.append(periodic_subcatalog)
+        if len(table) > 0:
+            datacatalogs.append(table)
     
     partition_catalog = pd.concat(subcatalogs)
     partition_catalog.sort_values("confidence", ascending=False, inplace=True)
 
-    return partition_catalog
+    datacatalog = pd.concat(datacatalogs)
+    
+    datacatalog.sort_values("confidence", ascending=False, inplace=True)
+
+    return partition_catalog, datacatalog

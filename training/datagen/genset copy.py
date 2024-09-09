@@ -3,7 +3,6 @@ from torch.utils.data import IterableDataset
 import numpy as np
 import plotly.graph_objects as go
 from joblib import Parallel, delayed
-from scipy.stats import gamma
 
 class GenSet(IterableDataset):
     def __init__(self, batchsize=384, randseed=1):
@@ -14,7 +13,10 @@ class GenSet(IterableDataset):
         
         self.batchsize = batchsize
 
-        self.apparition_frequencies = [9, 10, 11, 12, 13, 13, 10, 14, 14, 14, 14, 15, 15, 16, 16, 20, 21, 24, 35, 54]
+        self.days = 4000
+        self.longspacing = 175
+        self.shortspacing = 0.115
+        self.apparition_frequencies = [10, 11, 12, 13, 13, 10, 14, 14, 14, 14, 15, 15, 16, 16, 20, 21, 24, 35, 54]
         self.next = None
     
     def __iter__(self):
@@ -57,28 +59,25 @@ class GenSet(IterableDataset):
         return 1.5 * 10**r
 
     def getstd(self,flux):
-        r = self.s([-4.5, -1])
+        r = self.s([-4, -1])
         return 10**r
-        
     
     def apparitionsbeforegap(self):
         return np.random.choice(self.apparition_frequencies)
 
-    def gen_sampling(self, epochskip=0):
+    def gen_sampling(self, sparse=0):
+        x = [0]
+        i = 0
         app = self.apparitionsbeforegap()
-        longskip = self.s([170, 190])
-        shortskip = self.s([0.1, 0.2])
-
-        t = [0]
-
-        while t[-1] < 3500:
-            if len(t) % app == 0:
-                t.append(t[-1] + longskip)
+        while x[-1] < self.days:
+            if i % app == 0:
+                x.append(x[-1] + self.longspacing)
             else:
-                t.append(t[-1] + shortskip)
-        return np.array(t[:-1])
-        
-        
+                if np.random.random() > 0:
+                    x.append(x[-1] + self.shortspacing)
+                x.append(x[-1] + self.shortspacing)
+            i += 1
+        return np.array(x)
     
     def to_datatens(self,t,flux,err):
         if type(flux) == np.ndarray:
@@ -86,29 +85,26 @@ class GenSet(IterableDataset):
         if type(t) == np.ndarray:
             x = torch.tensor(t, dtype=torch.float32)
 
-        NOISE_TO_PRED_ERR_RATIO = self.s([0.5,0.75]) # Important factor. Empirically determined
-
+        NOISE_TO_PRED_ERR_RATIO = self.s([0.4,0.6]) # Important factor. Empirically determined
 
         sigflux = torch.tensor(err, dtype=torch.float32) * NOISE_TO_PRED_ERR_RATIO
-        # sigflux = sigflux * gamma.ppf(np.random.rand(len(sigflux)), self.s([1.6, 1.8]), loc=self.s([0.7, 0.9]), scale=self.s([0.1, 0.2]))
         sigflux += torch.randn_like(sigflux) * 0.3 * err # add some noise to error
 
         # Augmentations
         # Cosmic Ray Hits
-        # pct_rays = self.s([0.01, 0.02])
-        # n_rays = int(pct_rays * len(y))
-        n_rays = int(self.s([0, 6]))
+        pct_rays = self.s([0.01, 0.02])
+        n_rays = int(pct_rays * len(y))
         indices = np.random.choice(len(y), n_rays, replace=False)
 
         center = torch.median(y)
-        spread = (torch.quantile(y, 0.95) - torch.quantile(y, 0.05)) / 2
-        values = [center + spread * self.s([-3.5,3.5]) for i in range(n_rays)]
+        spread = torch.quantile(y, 0.95) - torch.quantile(y, 0.05)
+        values = [center + spread * self.s([-1,1]) for i in range(n_rays)]
 
         y[indices] = torch.tensor(values)
         sigflux[indices] = self.s([0.2, 4]) * sigflux[indices]
 
         # Random Misses (dropout)
-        pct_miss = self.s([0.05, 0.65])
+        pct_miss = self.s([0.05, 0.4])
         n_miss = int(pct_miss * len(y))
         indices = np.random.choice(len(y), n_miss, replace=False)
         
@@ -117,33 +113,22 @@ class GenSet(IterableDataset):
         x = x[~np.isin(np.arange(len(x)), indices)]
 
        # Shuffle lightcurve
-        # if np.random.random() > 0.5:
-        #     perm = torch.randperm(len(y))
-        #     y = y[perm]
-        #     sigflux = sigflux[perm]
-        #     x = x[perm]
+        if np.random.random() > 0.5:
+            perm = torch.randperm(len(y))
+            y = y[perm]
+            sigflux = sigflux[perm]
+            x = x[perm]
         
        # shift x times
-
 
         # if np.random.random() > 0.2:
         #     x = x + torch.randn_like(x) * (0.1/4000) * (x[-1] - x[0])
 
-        # Reverse lightcurve
+      #  Reverse lightcurve
         # if np.random.random() > 0.9:
         #     y = y.flip(0)
         #     sigflux = sigflux.flip(0)
         #     x = x.flip(0)
-
-        # Random block in lightcurve
-        # if np.random.random() > 0.97:
-        #     amt = int(self.s([0.05, 0.2]) * len(x))
-        #     start = int(np.random.random() * len(x))
-        #     end = start + amt
-            
-        #     y = torch.cat((y[:start], y[end:]))
-        #     sigflux = torch.cat((sigflux[:start], sigflux[end:]))
-        #     x = torch.cat((x[:start], x[end:]))
         
         # flip lightcurve
 
@@ -154,13 +139,6 @@ class GenSet(IterableDataset):
         scale_factor = torch.quantile(centered_y, 0.75) - torch.quantile(centered_y, 0.25)
         zscored = centered_y / scale_factor
         sigflux = sigflux / scale_factor
-
-        # rescale y
-        # if np.random.random() > 0.5:
-        #     factor = self.s([0.5,3])
-        #     y = y * factor
-        #     sigflux = sigflux * factor
-
 
         asin_y = torch.asinh(zscored)
         sigflux = torch.asinh(sigflux)
@@ -175,53 +153,41 @@ class GenSet(IterableDataset):
     def gen_null(self):
         brightness = self.baseflux()
         std = self.getstd(brightness)
-        sparse = np.random.random() > 0.75
+
         def get_null_func(bright):
             def eval(x):
                 return self.g(bright, std), std
+
             return eval
         light_func = np.vectorize(get_null_func(brightness))
-        x = self.gen_sampling(epochskip=self.s([-0.25, 0.15]))
+        x = self.gen_sampling(sparse=(np.random.random() > 0))
 
-        if sparse:
-            keep = int(self.s([20, 80]))
-            idx = np.random.choice(len(x), keep, replace=False)
-            x = x[idx]
-        
         y, err = light_func(x)
-
-        if sparse and np.random.random() < 0.3:
-            # autocorrelate
-            window = int(self.s([2,7]))
-            filt = np.ones(window) / (window)
-            y = np.convolve(y, filt, mode="same")
-
         return self.to_datatens(x,y,err)
     
-
-    def gen_nova(self, returnparams=False):
+    def gen_nova(self):
         brightness = self.baseflux()
         std = self.getstd(brightness)
 
-        onlynova = np.random.random() < 0.5
-        sparse = np.random.random() < 0.4
-        sparse_drop_chance = self.s([0.4,1])
-        max_spread_factor_at_peak = 3**self.s([0, 1])
-
-        off_peak = 0.5
-
-        def get_nova_func(brightness, amplitude, duration, s, u):
+        def get_nova_func(brightness, amplitude, duration, sharpness):
+            sharpness = sharpness*1.5 + 2
             t_0 = self.s([0, 4000 - duration])
+            sparse = np.random.random() > 0.8
+            sparse_drop_chance = self.s([0.6,1.6])
 
             def lognormal_raw(x): # The basic curve shape
-                leading_coeff = 1 / (x * s * np.sqrt(2 * np.pi))
-                exponent = -0.5 * (1/s**2) * (np.arccosh(duration / x) - u)**2
+                leading_coeff = 1 / (x * np.sqrt(2 * np.pi))
+                exponent = -0.5 * (np.arccosh(duration / x) - sharpness)**2
                 return leading_coeff * np.exp(exponent)
             
-            maximum_point = duration*(np.exp(-s)-0.065)
+            maximum_point = duration*np.exp(-sharpness)
             maximum_value = lognormal_raw(maximum_point)
             end_value = lognormal_raw(duration)
-            lognormal = lambda x: brightness + (amplitude / maximum_value) * (lognormal_raw(x) - end_value) # Normalize to amplitude
+            lognormal = lambda x: brightness + max(0, (amplitude / maximum_value) * (lognormal_raw(x) - end_value)) # Normalize to amplitude
+
+            max_spread_factor_at_peak = 0.5*10**self.s([0,1.25])
+
+            sparse_dist = self.s([180, 450])
 
             def eval(x):
                 spread = std
@@ -230,62 +196,33 @@ class GenSet(IterableDataset):
                     val = self.g(val, spread)
                     if np.abs(x - t_0) < 200:
                         spread *= max_spread_factor_at_peak
-
-                    if x < maximum_point and onlynova:
-                        return np.nan, np.nan
-                    if x > t_0 + off_peak * duration:
-                        if onlynova:
-                            return np.nan, np.nan
-                        if sparse and np.random.random() < sparse_drop_chance:
-                            return np.nan, np.nan
-                elif onlynova:
-                    return np.nan, np.nan
                 else:
-                    if sparse and np.random.random() < sparse_drop_chance:
-                        return np.nan, np.nan
                     val = self.g(brightness, spread)
                 
+                if sparse and np.abs(x - maximum_point) > sparse_dist: # if far off the nova, make it sparse
+                    if np.random.random() < sparse_drop_chance:
+                        return np.nan, np.nan
                     
                 return val, spread
- 
             return eval
 
-        amplitude = 10**self.s([0.5, 1.75]) * std
-        duration = self.s([300, 2000])
-        s = self.s([0.9,1.75]) 
-        u = self.s([1, 1.75])
+        amplitude = 10**self.s([0.5, 3]) * std
+        duration = self.s([500, 3000])
+        sharpness = self.s([0.8,1.4]) # ALWAYS BETWEEN 0 and 1
 
-        starfunc = np.vectorize(get_nova_func(brightness, amplitude, duration, s, u))
-        x = self.gen_sampling(epochskip=self.s([-0.25, 0.15]))
+        starfunc = np.vectorize(get_nova_func(brightness, amplitude, duration, sharpness))
+        x = self.gen_sampling()
         y, err = starfunc(x)
 
         x = x[~np.isnan(y)]
         y = y[~np.isnan(y)]
         err = err[~np.isnan(err)]
-        
-        if len(x) < 40:
-            return self.gen_nova(returnparams)
 
-        # iqrscore = (y - np.median(y)) / (np.quantile(y, 0.75) - np.quantile(y, 0.25))
-        # if np.max(np.abs(iqrscore)) < 3:
-        #     return self.gen_nova(returnparams)
-        
-        params = {
-                "amplitude": amplitude,
-                "duration": duration,
-                "s": s,
-                "u": u,
-                "onlynova": onlynova,
-                "sparse": sparse,
-                "sparse_drop_chance": sparse_drop_chance
-            }
-        
-        data = self.to_datatens(x,y,err)
-        if returnparams:
-            return data, params
-        else:
-            return data
-        # return data
+        zscore = (y - np.median(y)) / (np.quantile(y, 0.75) - np.quantile(y, 0.25))
+        if np.max(np.abs(zscore)) < 3:
+            return self.gen_nova()
+
+        return self.to_datatens(x,y,err)
 
     
     def gen_transit(self, returnpd=False):
@@ -323,31 +260,61 @@ class GenSet(IterableDataset):
             
             
     
-    def gen_pulsating_var(self, returnpd=False):  
+    def gen_pulsating_var(self, returnpd=False):
+        # ampsrange = [0, 0.75]
+        # periodsrange = [0.1, 200] # min and max in days
+
+        # def get_period_func(bright, amps, periods, phases):
+        #     amps = bright * np.array(amps)
+        #     freqs = 2 * np.pi / np.array(periods)
+        #     k = np.random.random()
+
+        #     def eval(x):
+        #         val = bright
+        #         for A, F, P in zip(amps, freqs, phases):
+        #             currentval = A * np.sin(F * (x + P))
+        #             val += currentval
+        #         return self.g(val, self.getstd(val))
+        #     return eval
+                
+        # r = np.random.random()
+        # if r > 0.7:
+        #     periods = [self.s([0.075, 1]), self.s([10, 60])]
+        # elif r > 0.2:
+        #     periods = [self.g(40,15), self.g(35, 30)]
+        # else:   
+        #     periods = [self.s([1, 100]), self.s([10, 500])]
+
+        
+        # periods = np.clip(periods, periodsrange[0], periodsrange[1])
+
+        # brightness = self.baseflux()
+        # std = self.getstd(brightness)
+        # amps = [self.g(1.75*std/brightness, 0.1), self.g(1.75*std/brightness, 0.1)] # Clip to 2.25 snr
+        # amps = np.clip(np.abs(amps), 3*std / brightness, ampsrange[1]) #Clip to 1.5 snr
+
+        # phases = [self.s([0,periods[0]]), self.s([0,periods[1]])]
+        # starfunc = np.vectorize(get_period_func(brightness, amps, periods, phases))
+        # x = self.gen_sampling()
+        # y = starfunc(x)  
+        # if returnpd:
+        #     return (self.to_datatens(x,y), periods[0] / np.max(x), phases[0] / np.max(x))
+        # return self.to_datatens(x,y)   
 
         brightness = self.baseflux()
         std = self.getstd(brightness)
 
-        splitter = np.random.random()
+        order = self.s([-1, 4])
+        period = 5**order
 
-        period = 1
-        if splitter < 0.3:
-            period = self.s([0.1,3])
-        elif splitter < 0.8:
-            period = self.s([3,100])
-        elif splitter < 0.95:
-            period = self.s([100, 1000])
-        else:
-            period = self.s([1000, 4000])
-
-        max_amp = 3*std + np.abs(self.g(0, 2.5*std))
+        max_amp = 2*std + np.abs(self.g(0, 3*std))
 
         gridres = 110
         grid = np.zeros(gridres)
 
         windowsize = gridres // 2.7
 
-        modifier = windowsize * self.s([4,9])
+        modifier = windowsize * 6
         filt = (1 / np.sqrt(np.pi*modifier)) * np.exp(-(1 / modifier)*np.arange(-windowsize, windowsize)**2)
         # filt[:int(windowsize)] += 0.001
         # if selector > 0.4: # 60% mountainrange waveform
@@ -356,7 +323,7 @@ class GenSet(IterableDataset):
         centers = []
         for i in range(n_peaks):
             centers.append(int(self.s([gridres*i / n_peaks + 1, gridres*(i+1) / n_peaks - windowsize/2])))
-        heights = [(-1)**k * self.s([0.15, 1]) for k in range(n_peaks)] 
+        heights = [(-1)**k * self.s([0.05, 1]) for k in range(n_peaks)] 
         grid[centers] = heights
 
         padding = np.zeros(int(windowsize//3))
@@ -366,7 +333,7 @@ class GenSet(IterableDataset):
         # relative to eachother peaks. Biggest peak can be 4.5 times bigger than smallest
         # Also alternates signs with (-1)**k
 
-        grid = (grid * max_amp / np.max(np.abs(grid))) + brightness
+        grid = (grid * max_amp / np.max(grid)) + brightness
 
         def eval(xr):
             x = xr % period

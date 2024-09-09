@@ -169,4 +169,5 @@ cython_debug/
 *.out
 *.html
 *.json
+*.pdf
 !training/sheets/*

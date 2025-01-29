@@ -171,3 +171,5 @@ cython_debug/
 *.json
 *.pdf
 !training/sheets/*
+*.tar.gz
+*.dmatrix

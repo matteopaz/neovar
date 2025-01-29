@@ -1,0 +1,162 @@
+Timer unit: 1e-09 s
+
+Total time: 6.42214 s
+File: /home/mpaz/neovar/secondary/period/get_period.py
+Function: peaktable at line 30
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    30                                           @profile
+    31                                           def peaktable(periods, sigs, n, dist): # actually kind of hard
+    32         1      12489.0  12489.0      0.0      if periods.shape[0] != sigs.shape[0]:
+    33         1  126087382.0    1e+08      2.0          periods = periods[:, None].repeat(sigs.shape[0], axis=1).T # make into a matrix
+    34                                           
+    35         1 3122679038.0    3e+09     48.6      rank = np.argsort(sigs, axis=1)[:, ::-1][:, :1000]
+    36         1   16889154.0    2e+07      0.3      sigs = np.take_along_axis(sigs, rank, axis=1).T
+    37         1   19124864.0    2e+07      0.3      periods = np.take_along_axis(periods, rank, axis=1).T
+    38                                           
+    39      1001     734010.0    733.3      0.0      for i in range(periods.shape[0]):
+    40      1000    1774737.0   1774.7      0.0          subtractor = periods[i]
+    41      1000   20196571.0  20196.6      0.3          subtractor[(subtractor == False) | (subtractor == np.nan)] = 0
+    42      1000 1852219168.0    2e+06     28.8          dperiod = np.abs(periods - subtractor)
+    43      1000  970912621.0 970912.6     15.1          invalids = (dperiod < dist*subtractor) & (dperiod != 0)
+    44      1000  142637595.0 142637.6      2.2          sigs[invalids] = 0.0
+    45      1000  124382615.0 124382.6      1.9          periods[invalids] = np.nan
+    46                                           
+    47         1       2311.0   2311.0      0.0      sigs = sigs.T
+    48         1        870.0    870.0      0.0      periods = periods.T
+    49                                           
+    50         1   24251077.0    2e+07      0.4      newrank = np.argsort(sigs, axis=1)[:, ::-1][:, :n]
+    51         1     236876.0 236876.0      0.0      periods = np.take_along_axis(periods, newrank, axis=1)
+    52         1        201.0    201.0      0.0      return periods
+
+Total time: 8.37843 s
+File: /home/mpaz/neovar/secondary/period/get_period.py
+Function: decide_periods at line 54
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    54                                           @profile
+    55                                           def decide_periods(periods, ls, ce, aov):
+    56         1    2724867.0    3e+06      0.0      oneday = np.cumsum(periods > 1).tolist().index(1)
+    57         1    2161042.0    2e+06      0.0      tenday = np.cumsum(periods > 10).tolist().index(1)
+    58         1    2132052.0    2e+06      0.0      fiftyday = np.cumsum(periods > 50).tolist().index(1)
+    59                                           
+    60                                               # norm
+    61         1  463095606.0    5e+08      5.5      ls = np.sqrt(ls - np.min(ls, axis=1)[:, None])
+    62         1  455120669.0    5e+08      5.4      ce = np.sqrt(ce - np.min(ce, axis=1)[:, None])
+    63         1  462003278.0    5e+08      5.5      aov = np.sqrt(aov - np.min(aov, axis=1)[:, None])
+    64                                           
+    65         1  269748223.0    3e+08      3.2      pgram = ls + ce + aov
+    66         1 6429364266.0    6e+09     76.7      peaks = peaktable(periods, pgram, 5, 0.125)
+    67                                           
+    68                                               # tr = go.Scatter(x=periods, y=pgram[0], mode="lines", name="Combined")
+    69                                               # pdslist = list(periods)
+    70                                               # indexes = [pdslist.index(p) for p in peaks[0]]
+    71                                           
+    72                                               # ls = go.Scatter(x=periods, y=ls[0], mode="lines", name="LS")
+    73                                               # ce = go.Scatter(x=periods, y=ce[0], mode="lines", name="CE")
+    74                                               # aov = go.Scatter(x=periods, y=aov[0], mode="lines", name="AOV")
+    75                                           
+    76                                               # trpeak = go.Scatter(x=peaks[0], y=pgram[0][indexes], mode="markers", name="Peaks", marker=dict(color="red"))
+    77                                           
+    78                                               # fig = go.Figure(data=[tr, trpeak])
+    79                                               # fig.write_html("testpgram.html")
+    80                                           
+    81         1  201633260.0    2e+08      2.4      best_sub_1d = periods[np.argmax(ls[:, :oneday] + ce[:, :oneday] + aov[:, :oneday], axis=1)]
+    82         1   73679291.0    7e+07      0.9      best_sub_10d = periods[np.argmax(ls[:, oneday:tenday] + ce[:, oneday:tenday] + aov[:, oneday:tenday], axis=1) + oneday]
+    83         1   12493809.0    1e+07      0.1      best_sub_50d = periods[np.argmax(ls[:, tenday:fiftyday] + ce[:, tenday:fiftyday] + aov[:, tenday:fiftyday], axis=1) + tenday]
+    84         1    4227354.0    4e+06      0.1      best_50plus = periods[np.argmax(ls[:, fiftyday:] + ce[:, fiftyday:] + aov[:, fiftyday:], axis=1) + fiftyday]
+    85                                           
+    86         1      47406.0  47406.0      0.0      best_found_periods = np.concatenate([peaks, best_sub_1d[:, None], best_sub_10d[:, None], best_sub_50d[:, None], best_50plus[:, None]], axis=1)
+    87         1        212.0    212.0      0.0      return best_found_periods
+
+Total time: 2666.04 s
+File: /home/mpaz/neovar/secondary/period/get_period.py
+Function: pgram at line 8
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+     8                                           @profile
+     9                                           def pgram(type, args):
+    10         3       5921.0   1973.7      0.0      if type == "ls":
+    11         1        7e+11    7e+11     25.2          pg = ls.LombScargle().calc(**args)
+    12         2       1903.0    951.5      0.0      elif type == "ce":
+    13         1        7e+11    7e+11     24.6          pg = ce.ConditionalEntropy().calc(**args)
+    14         1       2369.0   2369.0      0.0      elif type == "aov":
+    15         1        7e+11    7e+11     25.1          pg = aov.AOV().calc(**args)
+    16                                               else:
+    17                                                   raise ValueError("Invalid periodogram type")
+    18                                               
+    19         3        4e+11    1e+11     15.2      sigs = np.array([[a.significance for a in stats] for stats in pg], dtype=np.float32)
+    20         3        2e+11    8e+10      9.3      pds = np.array([[a.params[0] for a in stats] for stats in pg], dtype=np.float32)
+    21                                           
+    22         3 8810346235.0    3e+09      0.3      sorter = np.argsort(pds, axis=1)
+    23         3 3205143398.0    1e+09      0.1      pds = np.take_along_axis(pds, sorter, axis=1)
+    24         3 2994669266.0    1e+09      0.1      sigs = np.take_along_axis(sigs, sorter, axis=1)
+    25                                           
+    26                                               # rescale to 0-1
+    27                                               # sigs = (sigs - np.min(sigs, axis=1)[:, None]) / (np.max(sigs, axis=1) - np.min(sigs, axis=1))[:, None]
+    28         3      22592.0   7530.7      0.0      return pds[0], sigs
+
+Total time: 2868.21 s
+File: /home/mpaz/neovar/secondary/period/get_period.py
+Function: get_period at line 107
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   107                                           @profile
+   108                                           def get_period(dataframe, minpd=0.25, maxpd=1000, samples=100000, batchsize=1024):
+   109         1   12018976.0    1e+07      0.0      t_total = list(dataframe["time"].apply(lambda x: np.array(x, dtype=np.float32)).values)
+   110         1   13463495.0    1e+07      0.0      m_total = list(dataframe["mag"].apply(lambda x: np.array(x, dtype=np.float32)).values)
+   111                                           
+   112         1       8190.0   8190.0      0.0      batchsize = min(batchsize, len(dataframe))
+   113                                           
+   114         1      20657.0  20657.0      0.0      chunks = [(t_total[i*batchsize:(i+1)*batchsize], m_total[i*batchsize:(i+1)*batchsize]) for i in range(len(dataframe) // batchsize)]
+   115         1        316.0    316.0      0.0      d = 1.35
+   116         1        576.0    576.0      0.0      getpd = lambda x: 1/x**d
+   117         1    2167063.0    2e+06      0.0      trialperiods = getpd(np.linspace((1/minpd)**(1/d), (1/maxpd)**(1/d), samples)).astype(np.float32)
+   118                                           
+   119         1        747.0    747.0      0.0      best_periods = []
+   120         2       3519.0   1759.5      0.0      for t, m in chunks:
+   121         1    1066854.0    1e+06      0.0          pds = excise_aliased_periods(t, trialperiods)
+   122         1       1411.0   1411.0      0.0          pgram_args = {
+   123         1        381.0    381.0      0.0              "times": t,
+   124         1        281.0    281.0      0.0              "mags": m,
+   125         1        231.0    231.0      0.0              "periods": pds,
+   126         1       5651.0   5651.0      0.0              "period_dts": np.array([0.0], dtype=np.float32),
+   127         1       1554.0   1554.0      0.0              "n_stats": len(pds) - 1
+   128                                                   }
+   129                                           
+   130         1       2180.0   2180.0      0.0          t1 = time.time()
+   131         1        1e+12    1e+12     34.1          p1, sigls = pgram("ls", pgram_args)
+   132         1      88745.0  88745.0      0.0          print("LS done")
+   133         1        9e+11    9e+11     33.1          p2, sigaov = pgram("aov", pgram_args)
+   134         1      62458.0  62458.0      0.0          print("AOV done")
+   135         1        9e+11    9e+11     32.5          p3, sigce = pgram("ce", pgram_args)
+   136         1      64049.0  64049.0      0.0          print("CE done")
+   137         1       7807.0   7807.0      0.0          t2 = time.time()
+   138         1      14299.0  14299.0      0.0          print(t2 - t1)
+   139                                           
+   140         1 8382349362.0    8e+09      0.3          best = decide_periods(p1, sigls, sigce, sigaov)
+   141         1      43162.0  43162.0      0.0          print("Decide done")
+   142         1       2581.0   2581.0      0.0          best_periods.append(best)
+   143                                               
+   144         1      17351.0  17351.0      0.0      best_periods = np.concatenate(best_periods, axis=0)
+   145                                               # tbl = pd.DataFrame({
+   146                                               #     "best": best_periods[:, 0],
+   147                                               #     "secondbest": best_periods[:, 1],
+   148                                               #     "thirdbest": best_periods[:, 2],
+   149                                               #     "fourthbest": best_periods[:, 3],
+   150                                               #     "fifthbest": best_periods[:, 4],
+   151                                               #     "best_sub_1d": best_periods[:, 5],
+   152                                               #     "best_sub_10d": best_periods[:, 6],
+   153                                               #     "best_sub_50d": best_periods[:, 7],
+   154                                               #     "best_50plus": best_periods[:, 8]
+   155                                               # }, index=dataframe.index)
+   156         1        151.0    151.0      0.0      return best_periods
+
+  6.42 seconds - /home/mpaz/neovar/secondary/period/get_period.py:30 - peaktable
+  8.38 seconds - /home/mpaz/neovar/secondary/period/get_period.py:54 - decide_periods
+2666.04 seconds - /home/mpaz/neovar/secondary/period/get_period.py:8 - pgram
+2868.21 seconds - /home/mpaz/neovar/secondary/period/get_period.py:107 - get_period

@@ -17,13 +17,14 @@ def write_as_catalog(table):
         tbl["w1mpro"] = table["w1flux"].apply(tomag_w1)
         tbl["w2mpro"] = table["w2flux"].apply(tomag_w2)
 
-    tbl["w1mpro"] = tbl["w1mpro"].apply(np.nanmedian)
-    tbl["w2mpro"] = tbl["w2mpro"].apply(np.nanmedian)
+    tbl["w1mpro"] = tbl["w1mpro"].apply(np.nanmedian).apply(lambda x: round(x, 3))
+    tbl["w2mpro"] = tbl["w2mpro"].apply(np.nanmedian).apply(lambda x: round(x, 3))
     tbl["type"] = table["type"]
-    tbl["confidence"] = table["confidence"].apply(lambda x: np.log(1 / (1 - x)))
+    # tbl["confidence"] = table["confidence"].apply(lambda x: np.log(1 / (1 - x)))
+    tbl["confidence"] = table["confidence"]
 
     centroids = [get_centroid(row["ra"], row["dec"]) for _, row in table.iterrows()]
-    tbl["ra"] = [centroid[0] for centroid in centroids]
+    tbl["ra"] = [centroid[0] % 360 for centroid in centroids]
     tbl["dec"] = [centroid[1] for centroid in centroids]
 
     tbl["npts"] = table["mjd"].apply(len)

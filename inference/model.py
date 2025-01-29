@@ -146,7 +146,7 @@ class FCNFourierModel(nn.Module):
 
 class WCNFourierModel(nn.Module):
     def __init__(self, samples, out, wavelet, learnsamples=False):
-        super().__init__()
+        super(WCNFourierModel, self).__init__()
         self.samples = samples
         self.out = out
         
@@ -362,4 +362,12 @@ class FDFT(nn.Module):
         if self.zerocomp:
             transformed[:,0] = 0
             transformed[:,-1] = 0
+        return self.out(transformed)
+    
+    def inverse(self, x, original_size: int):
+        if x.shape[1] != self.samples:
+            raise Exception("Input must be of shape (b, samples, features)")
+        fourier_tens = self.make_fourier(original_size).to(device)
+        temp = x.to(torch.cfloat)
+        transformed = torch.matmul(fourier_tens.conj().transpose(0,1), temp)
         return self.out(transformed)

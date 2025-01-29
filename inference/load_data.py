@@ -6,41 +6,47 @@ from lib import get_centroid
 # from line_profiler import profile
 from math import ceil
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
 DATA_DIRECTORY = "./in"
 
 class PartitionDataLoader:
-    def __init__(self, parquet_db: pd.DataFrame, chunk_size: int):
+    def __init__(self, parquet_db: pd.DataFrame, chunk_size: int, tensor=True):
         self.tbl = parquet_db
         self.expected_flux_conversion_factor_w1 = 0.00000154851985514
         self.expected_flux_conversion_factor_w2 = 0.00000249224248693
         self.chunksize = chunk_size
         self.n_sources = 0
+        self.tensor = tensor
+        self.load_parquet()
+        self.augment = lambda x: x
     
     def load_parquet(self):
-        tbl = self.tbl
-
-        self.tbl = tbl.apply(self.process_row, axis=1)
+        self.tbl = self.tbl.apply(self.process_row, axis=1)
         self.tbl = self.tbl[self.tbl["designation"].notna()]
         # add nrows column
         self.tbl["npts"] = self.tbl["mjd"].apply(len)
         self.tbl = self.tbl.sort_values("npts", ascending=False)
 
         self.n_sources = len(self.tbl)        
-        return tbl
+        return self.tbl
+    
+    def get_processed_data(self):
+        return self.tbl
+    
+    def set_augmentation(self, augment):
+        self.augment = augment
+        return
     
     def __iter__(self):
-        self.load_parquet()
         self.i = 0
         return self
         
     def designation(self, centroid):
         ra = np.round(centroid[0], 6)
-        dec = np.abs(np.round(centroid[1], 6))
-        if dec > 0:
-            sgn = "+"
-        else:
-            sgn = "-"
-        return "NEOVAR {:.6f}{}{:.6f}".format(ra, sgn, dec)
+        dec = np.round(centroid[1], 6)
+        des = "VarWISE J" + str(ra) + str("" if dec < 0 else "+") + str(dec)
+        return des
     
     def process_row(self, row):
         # Choose if we will be using w1 or w2
@@ -114,7 +120,8 @@ class PartitionDataLoader:
             "dec": dec,
             "w1rchi2": w1rchi2,
             "w2rchi2": w2rchi2,
-            "qual_frame": qual_frame
+            "qual_frame": qual_frame,
+            "filter_mask": final_filter
         })
 
         for key in row.keys():
@@ -130,12 +137,14 @@ class PartitionDataLoader:
     
     def _to_tensor_row(self, row):
 
+        row = self.augment(row)
+
         values = self.normalize(row["w1flux"], row["w1sigflux"], row["mjd"])
 
         sorter = np.argsort(values[2])
         arr = np.stack(values, axis=1)
         arr = arr[sorter]
-        return torch.tensor(arr, dtype=torch.float32).cuda()
+        return torch.tensor(arr, dtype=torch.float32).to(device)
 
     def normalize(self, flux, sigflux, mjd):    
         day = (mjd - np.min(mjd)) / 4000
@@ -156,9 +165,12 @@ class PartitionDataLoader:
         
         slice = self.tbl.iloc[self.i: self.i + self.chunksize].copy()
         self.i += self.chunksize
-        tens = self.to_tensor(slice)
 
-        return slice, tens
+        if self.tensor:
+            tens = self.to_tensor(slice)
+
+            return slice, tens
+        return slice
     
     def __len__(self):
         return ceil(len(self.tbl) / self.chunksize)

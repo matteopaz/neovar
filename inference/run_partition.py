@@ -3,7 +3,6 @@ from transient_analysis import classify_transient
 from load_data import PartitionDataLoader
 import torch
 import pandas as pd
-import numpy as np
 import pickle
 from model import WCNFourierModel
 from time import perf_counter as pc

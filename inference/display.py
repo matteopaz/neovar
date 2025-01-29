@@ -11,7 +11,7 @@ app = dash.Dash(__name__)
 
 # Load initial data
 partition = 816
-datatbl = pd.read_parquet(f"out/partition_{partition}_table.parquet")
+datatbl = pd.read_parquet(f"out/partition_{partition}_subcatalog.parquet")
 pdl = PartitionDataLoader(datatbl, len(datatbl))
 data_iter = iter(pdl)
 

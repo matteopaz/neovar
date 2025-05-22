@@ -25,7 +25,7 @@ trialpds = np.concatenate([
 
 print(len(trialpds))
 
-cat = pd.read_csv("periodic_variables.csv")[:10]
+cat = pd.read_csv("periodic_variables.csv")
 cat["designation"] = cat["designation"].apply(lambda x: x.strip())
 # temp = cat.iloc[:2]
 ofinterest = "VarWISE J053315.06-013327.6"
@@ -84,6 +84,7 @@ for pid, group in cat.groupby("partition"):
     cat.loc[group.index, "time"] = t
     cat.loc[group.index, "mag"] = y
 
+cat.to_parquet("OUT+DATA.parquet")
 
 print("Periodfinding")
 t1 = time.time()
@@ -97,6 +98,7 @@ print("Rate: ", rate, " seconds per object")
 t1 = time.time()
 refine_pds = []
 mask = []
+print(unrefined_period_table)
 for i, (_, row) in enumerate(unrefined_period_table.iterrows()):
     periods = [row["peak1"], row["peak2"], row["peak3"]]
     refined = upscale_period_grid(periods, trialpds, 100)
@@ -105,11 +107,13 @@ for i, (_, row) in enumerate(unrefined_period_table.iterrows()):
 
 refine_pds = np.array(refine_pds, dtype=np.float32)
 mask = np.array(mask, dtype=np.int32)
-refine_pds, unique_idx = np.unique(refine_pds, return_index=True)
+_, unique_idx = np.unique(refine_pds, return_index=True)
+refine_pds = refine_pds[unique_idx]
 mask = mask[unique_idx]
 sorter = np.argsort(refine_pds)
 refine_pds = refine_pds[sorter]
 mask = mask[sorter]
+
 
 refined_period_table, refined_periodogram = get_period(cat, refine_pds, return_pgram=True, peak_resolution_pct=5, mask=mask)
 t2 = time.time()

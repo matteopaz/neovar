@@ -185,7 +185,7 @@ def get_period(dataframe, trialperiods, batchsize=1024, return_pgram=False, peak
             if len(mask) != len(pds):
                 raise ValueError("Mask length does not match number of periods")
             if np.max(mask)+1 != sig.shape[0]:
-                raise ValueError("Mask value out of bounds")
+                raise ValueError("Mask is incomplete or out of bounds")
             
             for i in range(sig.shape[0]):
                 sig[i, mask != i] = 0.0
